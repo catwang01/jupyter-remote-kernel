@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jupyter-remote-kernel"
+version = "0.1.0"
+description = "Run Jupyter kernels on remote machines through a reverse WebSocket tunnel"
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp>=3.9",
+    "jupyter_server>=2.0",
+]
+
+[project.scripts]
+jupyter-remote-kernel = "jupyter_remote_kernel.cli:main"
+
+[project.entry-points."jupyter_server.extension_paths"]
+jupyter_remote_kernel = "jupyter_remote_kernel.server_extension"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"etc/jupyter/jupyter_server_config.d" = [
+    "jupyter-config/server_config.d/jupyter_remote_kernel.json",
+]
