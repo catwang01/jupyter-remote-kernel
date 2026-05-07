@@ -4,9 +4,9 @@
 
 A reverse WebSocket tunnel that exposes Jupyter kernels from remote machines (behind NAT/firewalls) to a local JupyterLab via the Jupyter Gateway API.
 
-**两种部署模式**：
-- **Extension 模式**（推荐）：Hub 作为 Jupyter Server Extension 嵌入 JupyterLab，共享 auth
-- **Standalone 模式**：Hub 作为独立进程运行（适合部署在公网服务器）
+**Two deployment modes**:
+- **Extension mode** (recommended): Hub embedded in JupyterLab as a Jupyter Server Extension, shares auth
+- **Standalone mode**: Hub runs as a separate process (suitable for public servers)
 
 ## File Structure
 
@@ -25,56 +25,56 @@ pyproject.toml           # Package metadata + extension entry points
 ## Architecture
 
 ```
-JupyterLab (本地)
+JupyterLab (local)
   └── GatewayClient
         │  HTTP/WS
         ▼
-      Hub                            ← Jupyter Gateway API 兼容
-      (嵌入 JupyterLab 或独立进程)
-        │  WebSocket 隧道（单连接多路复用）
+      Hub                            ← Jupyter Gateway API compatible
+      (embedded in JupyterLab or standalone process)
+        │  WebSocket tunnel (single connection, multiplexed)
         ▼
-      RemoteAgent (agent.py)         ← 远端无公网机器
-        │  本地 HTTP/WS
+      RemoteAgent (agent.py)         ← remote machine behind NAT
+        │  local HTTP/WS
         ▼
-      Jupyter Server (远端本地)
+      Jupyter Server (remote local)
 ```
 
-### Extension 模式特点
+### Extension mode
 
-- Hub 端点挂在 `/jrk/` 路径下（如 `/jrk/api/kernels`）
-- JupyterLab 的 `@authenticated` 装饰器自动保护所有端点
-- `GatewayClient.url=http://localhost:<port>/jrk` 指向自身（非循环：browser → JupyterLab server → extension handler → agent）
-- Agent 连接时用 `Authorization: token <jupyterlab-token>` header 认证
+- Hub endpoints mounted under `/jrk/` (e.g. `/jrk/api/kernels`)
+- JupyterLab's `@authenticated` decorator protects all endpoints automatically
+- `GatewayClient.url=http://localhost:<port>/jrk` points to itself (not a loop: browser → JupyterLab server → extension handler → agent)
+- Agent authenticates with `Authorization: token <jupyterlab-token>` header
 
-### Standalone 模式特点
+### Standalone mode
 
-- Hub 独立监听端口，支持 `--token` 选项
-- Agent 通过 register 消息中的 `token` 字段认证
-- API 端点通过 `Authorization: token <token>` header 认证（aiohttp middleware）
+- Hub listens on its own port, supports `--token` option
+- Agent authenticates via `token` field in the register message
+- API endpoints authenticated via `Authorization: token <token>` header (aiohttp middleware)
 
 ## Gateway API Compliance
 
-GatewayClient 调用的全部接口及实现状态：
+All endpoints called by GatewayClient and their implementation status:
 
-### KernelSpec 接口
+### KernelSpec endpoints
 
-| 接口 | 状态 |
-|------|------|
-| `GET /api/kernelspecs` | ✅ 已实现 |
-| `GET /api/kernelspecs/{kernel_name}` | ✅ 已实现 |
-| `GET /kernelspecs/{kernel_name}/{resource}` | ✅ 已实现 |
+| Endpoint | Status |
+|----------|--------|
+| `GET /api/kernelspecs` | ✅ implemented |
+| `GET /api/kernelspecs/{kernel_name}` | ✅ implemented |
+| `GET /kernelspecs/{kernel_name}/{resource}` | ✅ implemented |
 
-### Kernel 接口
+### Kernel endpoints
 
-| 接口 | 状态 |
-|------|------|
-| `GET /api/kernels` | ✅ 已实现 |
-| `POST /api/kernels` | ✅ 已实现 |
-| `GET /api/kernels/{kernel_id}` | ✅ 已实现 |
-| `DELETE /api/kernels/{kernel_id}` | ✅ 已实现 |
-| `POST /api/kernels/{kernel_id}/restart` | ✅ 已实现 |
-| `POST /api/kernels/{kernel_id}/interrupt` | ✅ 已实现 |
-| `WS /api/kernels/{kernel_id}/channels` | ✅ 已实现 |
+| Endpoint | Status |
+|----------|--------|
+| `GET /api/kernels` | ✅ implemented |
+| `POST /api/kernels` | ✅ implemented |
+| `GET /api/kernels/{kernel_id}` | ✅ implemented |
+| `DELETE /api/kernels/{kernel_id}` | ✅ implemented |
+| `POST /api/kernels/{kernel_id}/restart` | ✅ implemented |
+| `POST /api/kernels/{kernel_id}/interrupt` | ✅ implemented |
+| `WS /api/kernels/{kernel_id}/channels` | ✅ implemented |
 
 ## Key Design Decisions
 
