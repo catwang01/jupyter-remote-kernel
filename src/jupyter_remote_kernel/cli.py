@@ -31,6 +31,8 @@ def main() -> None:
                     help="Jupyter Server root directory (created if absent)")
     ap.add_argument("--token", default="", metavar="TOKEN",
                     help="Hub auth token (required if Hub was started with --token)")
+    ap.add_argument("--debug", action="store_true",
+                    help="Print all WebSocket messages to stdout")
 
     args = p.parse_args()
 
@@ -43,6 +45,7 @@ def main() -> None:
         asyncio.run(RemoteAgent(
             args.hub, args.name, args.jupyter_port, args.root_dir,
             hub_token=args.token,
+            debug=args.debug,
         ).run())
 
 

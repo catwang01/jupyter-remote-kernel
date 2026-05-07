@@ -89,9 +89,11 @@ All endpoints called by GatewayClient and their implementation status:
 
 - `api_kernelspecs` must return `"default": ""` (empty string, not null) — JupyterLab's GatewayMappingKernelManager expects unicode.
 - **Kernelspec `name` field bug**: Hub must set `v["name"] = key` (e.g., `machine-1:python3`) in the kernelspec response. Without this, JupyterLab sends just `"python3"` when creating kernels, and Hub routes all to the first tunnel.
+- **Tornado `finish()` rejects lists**: `KernelsHandler.get` aggregates results from all agents into a list. Tornado's `finish()` refuses to serialize lists directly (CSRF protection). Must use `self.finish(json.dumps(results))` with explicit `Content-Type: application/json` header.
 - Agent generates a random token for its local Jupyter Server. On restart, it kills any existing process on the port to avoid token mismatch.
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
 - Agent sends both `Authorization` header (for extension mode) AND `token` field in register message (for standalone mode).
+- **Reverse proxy path**: When JupyterLab runs with `--ServerApp.base_url=/jupyter`, the Hub endpoint becomes `/jupyter/jrk/`. Agents must use the full path (e.g., `--hub http://host/jupyter/jrk`), not just `/jrk`.
 
 ## Build & Run
 
@@ -106,12 +108,19 @@ jupyter lab --port=8890 --ServerApp.token=test \
 # Agent (connects to extension mode)
 jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test
 
+# Agent with debug logging (prints all tunnel messages)
+jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test --debug
+
 # Standalone mode
 jupyter-remote-kernel hub --port 8765 --token my-secret
 jupyter-remote-kernel agent --hub http://hub-host:8765 --name gpu-machine --token my-secret
 
 # JupyterLab connects to standalone hub
 jupyter lab --GatewayClient.url=http://hub-host:8765 --GatewayClient.auth_token=my-secret
+
+# With base_url (e.g., behind reverse proxy)
+# Agent must include the full base_url path:
+jupyter-remote-kernel agent --hub http://host/jupyter/jrk --name test --token <token>
 ```
 
 ## Dependencies

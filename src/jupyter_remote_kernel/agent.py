@@ -27,19 +27,40 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+_TRUNCATE = 200  # max chars shown for data/body fields in debug output
+
+
 class RemoteAgent:
-    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = ""):
+    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False):
         base = hub_url.rstrip("/")
         ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
         self.tunnel_url = f"{ws_base}/tunnel/register"
         self.name = name
         self.hub_token = hub_token
+        self.debug = debug
         self.jupyter_port = jupyter_port or _free_port()
         self.root_dir = root_dir
         self.jupyter_base_http = f"http://localhost:{self.jupyter_port}"
         self.jupyter_base_ws = f"ws://localhost:{self.jupyter_port}"
         self.token = secrets.token_hex(16)
         self._local_ws: Dict[str, aiohttp.ClientWebSocketResponse] = {}
+
+    def _dbg(self, direction: str, msg: dict) -> None:
+        """Print a compact debug line for a tunnel message if --debug is set."""
+        if not self.debug:
+            return
+        t = msg.get("type", "?")
+        extras = []
+        for key in ("req_id", "ws_id", "method", "path", "status"):
+            if key in msg:
+                extras.append(f"{key}={msg[key]}")
+        for key in ("data", "body"):
+            if key in msg:
+                val = str(msg[key])
+                if len(val) > _TRUNCATE:
+                    val = val[:_TRUNCATE] + f"…(+{len(val)-_TRUNCATE})"
+                extras.append(f"{key}={val!r}")
+        print(f"[DEBUG] {direction:4s}  {t}  {' '.join(extras)}")
 
     # ── Jupyter Server lifecycle ─────────────────────────────────────────────
 
@@ -100,6 +121,7 @@ class RemoteAgent:
         msg: dict,
     ) -> None:
         req_id = msg["req_id"]
+        self._dbg("RECV", msg)
         url = f"{self.jupyter_base_http}{msg['path']}"
         headers = dict(msg.get("headers") or {})
         headers.update(self._auth())
@@ -108,21 +130,25 @@ class RemoteAgent:
                 msg["method"], url, headers=headers, data=msg.get("body")
             ) as resp:
                 body = await resp.text()
-                await hub_ws.send_json({
+                out = {
                     "type": "http_res",
                     "req_id": req_id,
                     "status": resp.status,
                     "headers": dict(resp.headers),
                     "body": body,
-                })
+                }
+                self._dbg("SEND", out)
+                await hub_ws.send_json(out)
         except Exception as e:
-            await hub_ws.send_json({
+            out = {
                 "type": "http_res",
                 "req_id": req_id,
                 "status": 500,
                 "headers": {},
                 "body": json.dumps({"error": str(e)}),
-            })
+            }
+            self._dbg("SEND", out)
+            await hub_ws.send_json(out)
 
     # ── Relay: WebSocket ─────────────────────────────────────────────────────
 
@@ -136,21 +162,27 @@ class RemoteAgent:
         try:
             async for msg in local_ws:
                 if msg.type == WSMsgType.TEXT:
-                    await hub_ws.send_json({
+                    out = {
                         "type": "ws_frame", "ws_id": ws_id,
                         "data": msg.data, "binary": False,
-                    })
+                    }
+                    self._dbg("SEND", out)
+                    await hub_ws.send_json(out)
                 elif msg.type == WSMsgType.BINARY:
-                    await hub_ws.send_json({
+                    out = {
                         "type": "ws_frame", "ws_id": ws_id,
                         "data": base64.b64encode(msg.data).decode(), "binary": True,
-                    })
+                    }
+                    self._dbg("SEND", out)
+                    await hub_ws.send_json(out)
                 elif msg.type in (WSMsgType.CLOSE, WSMsgType.ERROR):
                     break
         finally:
             self._local_ws.pop(ws_id, None)
             try:
-                await hub_ws.send_json({"type": "ws_close", "ws_id": ws_id})
+                close_msg = {"type": "ws_close", "ws_id": ws_id}
+                self._dbg("SEND", close_msg)
+                await hub_ws.send_json(close_msg)
             except Exception:
                 pass
 
@@ -161,17 +193,22 @@ class RemoteAgent:
         msg: dict,
     ) -> None:
         ws_id = msg["ws_id"]
+        self._dbg("RECV", msg)
         url = f"{self.jupyter_base_ws}{msg['path']}"
         try:
             local_ws = await session.ws_connect(url, headers=self._auth())
             self._local_ws[ws_id] = local_ws
-            await hub_ws.send_json({"type": "ws_opened", "ws_id": ws_id})
+            opened = {"type": "ws_opened", "ws_id": ws_id}
+            self._dbg("SEND", opened)
+            await hub_ws.send_json(opened)
             # Fire-and-forget relay task; closes itself when the WS ends
             asyncio.create_task(self._relay_ws_to_hub(hub_ws, local_ws, ws_id))
         except Exception as e:
-            await hub_ws.send_json({
+            reject = {
                 "type": "ws_reject", "ws_id": ws_id, "error": str(e),
-            })
+            }
+            self._dbg("SEND", reject)
+            await hub_ws.send_json(reject)
 
     # ── Main loop ────────────────────────────────────────────────────────────
 
@@ -186,7 +223,7 @@ class RemoteAgent:
                         headers = {}
                         if self.hub_token:
                             headers["Authorization"] = f"token {self.hub_token}"
-                        async with session.ws_connect(self.tunnel_url, headers=headers) as ws:
+                        async with session.ws_connect(self.tunnel_url, headers=headers, heartbeat=30.0) as ws:
                             await ws.send_json({"type": "register", "name": self.name, "token": self.hub_token})
 
                             async for msg in ws:
@@ -208,6 +245,7 @@ class RemoteAgent:
                                         )
 
                                     elif t == "ws_frame":
+                                        self._dbg("RECV", data)
                                         local = self._local_ws.get(data["ws_id"])
                                         if local:
                                             if data["binary"]:
@@ -218,6 +256,7 @@ class RemoteAgent:
                                                 await local.send_str(data["data"])
 
                                     elif t == "ws_close":
+                                        self._dbg("RECV", data)
                                         local = self._local_ws.pop(data["ws_id"], None)
                                         if local:
                                             await local.close()

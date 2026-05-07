@@ -94,6 +94,7 @@ Options:
 - `--token TOKEN` — Auth token (required if Hub/JupyterLab has token auth)
 - `--jupyter-port PORT` — Local Jupyter Server port (default: auto-selects free port)
 - `--root-dir DIR` — Kernel working directory (created if absent)
+- `--debug` — Print all tunnel WebSocket messages to stdout (useful for troubleshooting)
 
 ## Authentication
 
@@ -142,6 +143,8 @@ curl http://localhost:9100/debug/tunnels
 2. **macOS firewall blocks background processes**: On macOS, `nohup` processes may be blocked from outbound connections. Workaround: SSH reverse port forwarding (`ssh -f -N -R <port>:localhost:<port> user@remote`).
 
 3. **Agent restart requires port cleanup**: The agent kills any existing process on its Jupyter port before starting to avoid token mismatch.
+
+4. **Reverse proxy base_url**: When JupyterLab runs with a `base_url` (e.g., `--ServerApp.base_url=/jupyter`), the agent must include the full path: `--hub http://host/jupyter/jrk`. Using just `/jrk` without the base_url prefix results in 404.
 
 ## Development
 
