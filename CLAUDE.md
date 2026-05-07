@@ -12,6 +12,7 @@ A reverse WebSocket tunnel that exposes Jupyter kernels from remote machines (be
 
 ```
 src/jupyter_remote_kernel/
+├── __init__.py          # MUST expose _jupyter_server_extension_points (see below)
 ├── hub.py               # Standalone Hub (aiohttp)
 ├── server_extension.py  # Extension Hub (Tornado, embedded in JupyterLab)
 ├── agent.py             # Remote agent (runs on each remote machine)
@@ -42,7 +43,8 @@ JupyterLab (local)
 ### Extension mode
 
 - Hub endpoints mounted under `/jrk/` (e.g. `/jrk/api/kernels`)
-- JupyterLab's `@authenticated` decorator protects all endpoints automatically
+- JupyterLab's `@authenticated` decorator protects all HTTP endpoints automatically
+- `KernelChannelsHandler` (WS) uses standard `@authenticated` — JRK's patched `start_channels()` passes the auth token explicitly in `create_connection()` headers
 - `GatewayClient.url=http://localhost:<port>/jrk` points to itself (not a loop: browser → JupyterLab server → extension handler → agent)
 - Agent authenticates with `Authorization: token <jupyterlab-token>` header
 
@@ -94,6 +96,19 @@ All endpoints called by GatewayClient and their implementation status:
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
 - Agent sends both `Authorization` header (for extension mode) AND `token` field in register message (for standalone mode).
 - **Reverse proxy path**: When JupyterLab runs with `--ServerApp.base_url=/jupyter`, the Hub endpoint becomes `/jupyter/jrk/`. Agents must use the full path (e.g., `--hub http://host/jupyter/jrk`), not just `/jrk`.
+- **Tunnel heartbeat**: Agent uses `heartbeat=30.0` on the tunnel WS (`aiohttp` ping/pong) to prevent idle connection resets. Without this, the server may close the tunnel due to inactivity, causing `Connection reset by peer` (errno 54 on macOS).
+- **Kernel restore on reconnect**: When an agent disconnects, `on_close()` removes all its kernel mappings from `kernel_tunnel`. On re-registration, `_restore_kernels()` queries `GET /api/kernels` on the agent's local Jupyter Server and re-populates the mappings. Without this, existing kernels become unreachable after agent reconnect, causing "Lost connection to Gateway" loops.
+- **Kernel channels WS auth**: `GatewayKernelClient.start_channels()` (from `jupyter_server`) does not pass auth headers — upstream bug. JRK's patched `_start_channels_nonblocking` fixes this by passing `{auth_header_key: auth_scheme + auth_token}` explicitly in `create_connection()`. `KernelChannelsHandler` uses standard `@authenticated`.
+- **Browser WS goes through JupyterLab proxy, not directly to jrk**: Browser connects to `ws://host/api/kernels/{id}/channels` (without `/jrk/`). JupyterLab's server-side gateway proxy then connects to `ws://localhost/jrk/api/kernels/{id}/channels` internally. Browser never directly accesses `/jrk/` endpoints. When accessing behind a reverse proxy (Cloudflare/nginx/frp), WS failures are caused by JupyterLab's own auth mechanism, not JRK's.
+- **Notebook kernelspec metadata**: Notebooks must have both `name` and `display_name` in `metadata.kernelspec`. Missing `display_name` causes repeated `Notebook JSON is invalid` errors on save (though it does not block execution directly).
+- **Extension loading: `__init__.py` is critical**: `jupyter_server` imports the top-level package (`jupyter_remote_kernel`), NOT `server_extension.py` directly. So `__init__.py` MUST re-export `_jupyter_server_extension_points` from `server_extension.py`. Without this, extension loading fails with `_load_jupyter_server_extension function was not found`.
+- **Agent starts Jupyter via `python3 -m jupyter_server`**: NOT `python3 -m jupyter server`. The latter relies on `jupyter` dispatching to a `jupyter-server` script in PATH, which fails on systems where user Python bin is not in PATH (e.g., macOS Xcode Python 3.9 with user packages at `~/Library/Python/3.9/bin`).
+- **Auto-enable doesn't work with editable install**: `pip install -e .` does NOT install `data_files`. Must manually copy `jupyter-config/server_config.d/jupyter_remote_kernel.json` to `<prefix>/etc/jupyter/jupyter_server_config.d/`, or run `jupyter server extension enable jupyter_remote_kernel`.
+- **Multiple Python installs on remote machines**: When deploying the agent, the `jupyter-remote-kernel` binary's shebang determines which Python runs it. If a machine has multiple Pythons (e.g., system Python 3.9, Homebrew Python 3.13, Conda), you must `pip install` using the same Python that is in PATH. Verify with `head -1 $(which jupyter-remote-kernel)`.
+- **Agent `--debug` flag**: Prints all tunnel WebSocket messages (`[DEBUG] RECV/SEND`) with type, req_id/ws_id, and truncated data/body (200 chars). Useful for verifying messages flow bidirectionally.
+- **GatewayKernelClient monkey-patches** (in `server_extension.py`): Two patches applied at module load time to fix compatibility with `jupyter-server-nbmodel`'s `POST /api/kernels/{id}/execute` endpoint:
+  1. **`start_channels()` deadlock + auth fix**: Original `start_channels()` calls `websocket.create_connection()` synchronously (deadlock) and without auth headers (403). Fix: run in `loop.run_in_executor()` and pass `{auth_header_key: auth_scheme + auth_token}` in `header=`.
+  2. **`execute_interactive()` ZMQ Poller fix**: Base class `_async_execute_interactive()` uses `zmq.asyncio.Poller` which requires a `.socket` attribute on each channel. `GatewayKernelClient` channels are `ChannelQueue` objects (WebSocket-backed) with no `.socket`. Fix: replace the ZMQ poll loop with `ChannelQueue.get_msg()` calls. Must also explicitly set `GatewayKernelClient.execute_interactive = <new_func>` because `AsyncKernelClient` assigns `execute_interactive` as a direct class attribute (bypassing MRO).
 
 ## Build & Run
 
@@ -101,7 +116,8 @@ All endpoints called by GatewayClient and their implementation status:
 pip install -e .
 
 # Extension mode (recommended)
-jupyter lab --port=8890 --ServerApp.token=test \
+# MCP_TOKEN enables jupyter-mcp-server endpoint at /mcp
+MCP_TOKEN=test jupyter lab --port=8890 --ServerApp.token=test \
   --GatewayClient.url=http://localhost:8890/jrk \
   --GatewayClient.auth_token=test
 
@@ -128,3 +144,34 @@ jupyter-remote-kernel agent --hub http://host/jupyter/jrk --name test --token <t
 - `aiohttp>=3.9` — async HTTP server/client (standalone Hub + agent's WS client)
 - `jupyter_server>=2.0` — remote Jupyter Server (started by agent) + extension framework (Tornado handlers)
 - `ipykernel` — must be installed on remote machines
+
+### Optional (for Jupyter MCP integration)
+
+- `jupyter-mcp-server` — MCP server endpoint at `/mcp` (SSE-based), enables AI clients to control notebooks
+- `jupyter-mcp-tools` — JupyterLab frontend extension for MCP tools (echo WS at `/jupyter-mcp-tools/echo`)
+- `jupyter-collaboration>=4.0.2` + `pycrdt` — real-time CRDT sync, required for MCP edits to appear live in browser
+
+**⚠️ GatewayClient incompatibility**: `jupyter-mcp-tools` (which depends on `jupyter-server-nbmodel`) is NOT compatible with GatewayClient/JRK. Must disable both extensions when using JRK:
+```bash
+jupyter labextension disable @datalayer/jupyter-server-nbmodel
+jupyter labextension disable @datalayer/jupyter-mcp-tools
+jupyter labextension disable @jupyter/collaboration-extension
+```
+See "Known Issues" for details.
+
+## Known Issues / TODO
+
+- **Browser 302 on kernel channels WS**: When JupyterLab is accessed behind a reverse proxy (Cloudflare/nginx/frp), JupyterLab's own `@authenticated` on its native `/api/kernels/{id}/channels` endpoint may fail for external requests, returning 302. This is a JupyterLab issue, not JRK — browser never connects to `/jrk/` directly.
+- **Stale Jupyter Server processes**: Agent uses `_free_port()` on each start, accumulating orphan Jupyter Server processes from previous runs (visible in `ps aux`). Consider tracking PIDs or using a fixed port with proper cleanup.
+- **JupyterLab Collaboration**: `@jupyter/collaboration-extension` opens multiple simultaneous WS sessions per kernel (3 session_ids observed). Must be disabled when using GatewayClient/JRK.
+- **`jupyter-server-nbmodel` incompatible with GatewayClient/JRK**: `@datalayer/jupyter-server-nbmodel` (dependency of `jupyter-mcp-tools`) breaks kernel WS connections when GatewayClient is enabled. Root causes:
+  1. **Frontend**: Its `package.json` declares `"disabledExtensions": ["@jupyterlab/notebook-extension:cell-executor"]`, killing the default cell executor. Without it, the frontend cannot establish kernel WS channels.
+  2. **Backend (deadlock)**: `execution_stack.py` calls `GatewayKernelManager.client()` → returns `GatewayKernelClient` → `kernel_worker` in `actions.py` calls `GatewayKernelClient.start_channels()` → calls `websocket.create_connection()` synchronously, blocking the event loop. Since Hub runs in the same Tornado process, the event loop can't process the WS upgrade → deadlock → `WebSocketTimeoutException`. Additionally, `start_channels()` does not pass auth headers (upstream `jupyter_server` bug).
+  3. **Backend (ZMQ incompatibility)**: After `start_channels()` succeeds, `execute_interactive()` uses `zmq.asyncio.Poller` requiring a `.socket` attribute, but `GatewayKernelClient` channels are `ChannelQueue` objects with no `.socket` → `AttributeError`.
+  4. Registers a non-standard `POST /api/kernels/{id}/execute` HTTP endpoint (visible in browser network tab as `/execute?<timestamp>`).
+  - **JRK patches applied** (in `server_extension.py`): Monkey-patches `GatewayKernelClient.start_channels` (non-blocking via `run_in_executor`) and `execute_interactive` (uses `ChannelQueue.get_msg()` instead of ZMQ Poller). Verified working on local Mac (`POST /execute` returns `{"status": "ok"}`).
+  - **Frontend fix still needed**: Must `jupyter labextension disable @datalayer/jupyter-server-nbmodel && jupyter labextension disable @datalayer/jupyter-mcp-tools` — the disabled cell executor (issue 1) cannot be fixed from JRK.
+  - **Auth fix**: JRK's patched `start_channels()` now passes `header={auth_header_key: auth_scheme + auth_token}` to `create_connection()`. `KernelChannelsHandler` uses standard `@authenticated`.
+  - **Upstream fix still needed**: `jupyter_server`'s `GatewayKernelClient.start_channels()` should pass auth headers and use `run_in_executor` to avoid deadlock when the gateway is in the same process.
+- **Missing `/api/sessions` endpoint**: Hub does not implement `/api/sessions`. Some GatewayClient versions may proxy sessions through the gateway; if so, the 404 could prevent proper session-kernel binding and code execution.
+- **Multiple JupyterLab processes on same port**: If JupyterLab is not cleanly killed (e.g., `kill` sent but process lingers), subsequent starts silently bind to next available port (8891, 8892...) while `GatewayClient.url` still points to 8890. Always verify with `ps aux | grep jupyterlab` and kill all stale processes before restarting.
