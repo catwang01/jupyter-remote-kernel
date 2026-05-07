@@ -231,7 +231,8 @@ class KernelsHandler(_Base):
                 results.extend(json.loads(res["body"]))
             except Exception:
                 pass
-        self.finish(results)
+        self.set_header("Content-Type", "application/json")
+        self.finish(json.dumps(results))
 
     @tornado.web.authenticated
     async def post(self):
