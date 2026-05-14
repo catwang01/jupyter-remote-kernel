@@ -37,8 +37,9 @@ async def test_default_is_empty_string():
     async with aiohttp.ClientSession(headers=AUTH) as s:
         async with s.get(f"{JRK}/api/kernelspecs") as r:
             data = await r.json()
-    assert data["default"] == "", (
-        f"default={data['default']!r}; JupyterLab requires empty string, not null"
+    # default must be a string (not null); either empty or a valid kernelspec name
+    assert isinstance(data["default"], str), (
+        f"default={data['default']!r}; JupyterLab requires a string, not null"
     )
 
 

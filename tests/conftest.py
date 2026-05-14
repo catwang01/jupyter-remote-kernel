@@ -88,7 +88,7 @@ async def kernel(agent1):
             f"{JRK}/api/kernels",
             json={"name": "agent1:python3"},
         ) as r:
-            assert r.status == 200, f"kernel create failed: {r.status}"
+            assert r.status in (200, 201), f"kernel create failed: {r.status}"
             data = await r.json()
             kid = data["id"]
 

@@ -117,7 +117,7 @@ async def ws_execute(kernel_id: str, code: str, timeout: int = 30) -> dict:
         async with session.ws_connect(
             ws_url,
             headers=AUTH,
-            timeout=aiohttp.ClientWSTimeout(ws_connect=10),
+            timeout=aiohttp.ClientWSTimeout(ws_close=10),
         ) as ws:
             await ws.send_str(json.dumps(execute_request))
 

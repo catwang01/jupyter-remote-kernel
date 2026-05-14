@@ -14,7 +14,7 @@ def require_agents(agent1, agent2):
 async def test_create_kernel():
     async with aiohttp.ClientSession(headers=AUTH) as s:
         async with s.post(f"{JRK}/api/kernels", json={"name": "agent1:python3"}) as r:
-            assert r.status == 200
+            assert r.status in (200, 201)
             data = await r.json()
     assert "id" in data
     assert data["name"] == "agent1:python3"

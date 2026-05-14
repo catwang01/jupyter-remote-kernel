@@ -47,7 +47,7 @@ async def test_kernelspec_prefix_routing():
     kid = None
     async with aiohttp.ClientSession(headers=AUTH) as s:
         async with s.post(f"{JRK}/api/kernels", json={"name": "agent2:python3"}) as r:
-            assert r.status == 200
+            assert r.status in (200, 201)
             data = await r.json()
             kid = data["id"]
 

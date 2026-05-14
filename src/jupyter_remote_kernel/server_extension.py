@@ -364,6 +364,7 @@ class KernelSpecHandler(_Base):
         if res["status"] == 404:
             raise tornado.web.HTTPError(404)
         spec = json.loads(res["body"])
+        spec["name"] = kernel_name
         spec.setdefault("spec", {})
         spec["spec"]["display_name"] = f"[{tunnel.name}] {spec['spec'].get('display_name', real_name)}"
         self.finish(spec)

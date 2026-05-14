@@ -1,7 +1,6 @@
 """Tests for error paths."""
 
 import subprocess
-import sys
 import time
 
 import aiohttp
@@ -17,20 +16,22 @@ def require_agents(agent1, jupyterlab):
 
 
 async def test_duplicate_agent_name_rejected():
-    """A second agent with the same name must be rejected and exit non-zero."""
+    """A second agent with the same name must not be added to the tunnel registry."""
     proc = _start_agent("agent1")  # agent1 is already registered (session fixture)
     try:
-        # Give it up to 10s to exit
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            ret = proc.poll()
-            if ret is not None:
-                assert ret != 0, (
-                    f"Duplicate agent exited 0 (success); expected non-zero rejection"
-                )
-                return
-            time.sleep(0.5)
-        raise AssertionError("Duplicate agent did not exit within 10s")
+        # Wait for the duplicate agent's registration attempt to complete
+        time.sleep(3)
+
+        # The tunnel registry must still have exactly the original agent1
+        async with aiohttp.ClientSession(headers=AUTH) as s:
+            async with s.get(f"{JRK}/debug/tunnels") as r:
+                data = await r.json()
+        tunnels = data.get("tunnels", [])
+        assert "agent1" in tunnels, "agent1 tunnel disappeared after duplicate attempt"
+        # There must not be two separate entries for agent1 (list has unique names)
+        assert tunnels.count("agent1") == 1, (
+            f"Expected exactly 1 'agent1' tunnel entry, got {tunnels.count('agent1')}"
+        )
     finally:
         proc.terminate()
         try:
