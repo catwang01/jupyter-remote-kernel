@@ -95,6 +95,7 @@ All endpoints called by GatewayClient and their implementation status:
 - Agent generates a random token for its local Jupyter Server. On restart, it kills any existing process on the port to avoid token mismatch.
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
 - Agent sends both `Authorization` header (for extension mode) AND `token` field in register message (for standalone mode).
+- Agent supports `--extra-header Key:Value` (repeatable) for custom headers on all Hub requests (e.g., Cloudflare Access, custom API gateways). Extra headers are merged after the `Authorization` header, so they can also override it.
 - **Reverse proxy path**: When JupyterLab runs with `--ServerApp.base_url=/jupyter`, the Hub endpoint becomes `/jupyter/jrk/`. Agents must use the full path (e.g., `--hub http://host/jupyter/jrk`), not just `/jrk`.
 - **Tunnel heartbeat**: Agent uses `heartbeat=30.0` on the tunnel WS (`aiohttp` ping/pong) to prevent idle connection resets. Without this, the server may close the tunnel due to inactivity, causing `Connection reset by peer` (errno 54 on macOS).
 - **Kernel restore on reconnect**: When an agent disconnects, `on_close()` removes all its kernel mappings from `kernel_tunnel`. On re-registration, `_restore_kernels()` queries `GET /api/kernels` on the agent's local Jupyter Server and re-populates the mappings. Without this, existing kernels become unreachable after agent reconnect, causing "Lost connection to Gateway" loops.
@@ -126,6 +127,10 @@ jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token 
 
 # Agent with debug logging (prints all tunnel messages)
 jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test --debug
+
+# Agent with extra headers (e.g., behind Cloudflare Access)
+jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test \
+  --extra-header "CF-Access-Client-Id:abc" --extra-header "CF-Access-Client-Secret:xyz"
 
 # Standalone mode
 jupyter-remote-kernel hub --port 8765 --token my-secret

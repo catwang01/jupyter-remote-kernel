@@ -95,6 +95,7 @@ Options:
 - `--jupyter-port PORT` — Local Jupyter Server port (default: auto-selects free port)
 - `--root-dir DIR` — Kernel working directory (created if absent)
 - `--debug` — Print all tunnel WebSocket messages to stdout (useful for troubleshooting)
+- `--extra-header KEY:VALUE` — Extra HTTP header added to all Hub requests (repeatable, useful for reverse proxies like Cloudflare Access)
 
 ## Authentication
 
