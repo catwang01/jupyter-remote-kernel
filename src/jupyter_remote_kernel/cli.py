@@ -35,6 +35,8 @@ def main() -> None:
                     help="Print all WebSocket messages to stdout")
     ap.add_argument("--extra-header", action="append", default=[], metavar="KEY:VALUE",
                     help="Extra HTTP header added to all Hub requests (repeatable)")
+    ap.add_argument("jupyter_args", nargs=argparse.REMAINDER, metavar="-- [JUPYTER_ARGS...]",
+                    help="Additional arguments passed to jupyter server (after --)")
 
     args = p.parse_args()
 
@@ -50,11 +52,16 @@ def main() -> None:
                 p.error(f"--extra-header must be KEY:VALUE, got: {h!r}")
             k, _, v = h.partition(":")
             extra_headers[k.strip()] = v.strip()
+
+        # Filter out the '--' separator if present
+        jupyter_args = [arg for arg in args.jupyter_args if arg != '--']
+
         asyncio.run(RemoteAgent(
             args.hub, args.name, args.jupyter_port, args.root_dir,
             hub_token=args.token,
             debug=args.debug,
             extra_headers=extra_headers,
+            jupyter_args=jupyter_args,
         ).run())
 
 

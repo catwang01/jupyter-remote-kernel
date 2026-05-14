@@ -27,11 +27,8 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-_TRUNCATE = 200  # max chars shown for data/body fields in debug output
-
-
 class RemoteAgent:
-    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None):
+    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None, jupyter_args: Optional[list] = None):
         base = hub_url.rstrip("/")
         ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
         self.tunnel_url = f"{ws_base}/tunnel/register"
@@ -45,9 +42,10 @@ class RemoteAgent:
         self.jupyter_base_ws = f"ws://localhost:{self.jupyter_port}"
         self.token = secrets.token_hex(16)
         self._local_ws: Dict[str, aiohttp.ClientWebSocketResponse] = {}
+        self.jupyter_args = jupyter_args or []
 
     def _dbg(self, direction: str, msg: dict) -> None:
-        """Print a compact debug line for a tunnel message if --debug is set."""
+        """Print a complete debug line for a tunnel message if --debug is set."""
         if not self.debug:
             return
         t = msg.get("type", "?")
@@ -58,8 +56,6 @@ class RemoteAgent:
         for key in ("data", "body"):
             if key in msg:
                 val = str(msg[key])
-                if len(val) > _TRUNCATE:
-                    val = val[:_TRUNCATE] + f"…(+{len(val)-_TRUNCATE})"
                 extras.append(f"{key}={val!r}")
         print(f"[DEBUG] {direction:4s}  {t}  {' '.join(extras)}")
 
@@ -81,12 +77,17 @@ class RemoteAgent:
             f"--ServerApp.token={self.token}",
             "--ServerApp.ip=127.0.0.1",
             "--ServerApp.allow_remote_access=False",
+            # Auto-cull idle kernels to clean up dead/stale kernel processes
+            "--MappingKernelManager.cull_idle_timeout=3600",  # 1 hour
+            "--MappingKernelManager.cull_interval=300",       # check every 5 min
         ]
         cwd = None
         if self.root_dir:
             os.makedirs(self.root_dir, exist_ok=True)
             cmd.append(f"--ServerApp.root_dir={self.root_dir}")
             cwd = self.root_dir
+        # Append user-provided Jupyter args
+        cmd.extend(self.jupyter_args)
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
@@ -94,6 +95,8 @@ class RemoteAgent:
             stderr=subprocess.DEVNULL,
         )
         print(f"[Agent] Starting Jupyter Server on port {self.jupyter_port} ...")
+        if self.jupyter_args:
+            print(f"[Agent] Extra Jupyter args: {' '.join(self.jupyter_args)}")
         async with aiohttp.ClientSession() as s:
             for _ in range(30):
                 await asyncio.sleep(1)

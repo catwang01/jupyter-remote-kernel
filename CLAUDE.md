@@ -94,8 +94,10 @@ All endpoints called by GatewayClient and their implementation status:
 - **Tornado `finish()` rejects lists**: `KernelsHandler.get` aggregates results from all agents into a list. Tornado's `finish()` refuses to serialize lists directly (CSRF protection). Must use `self.finish(json.dumps(results))` with explicit `Content-Type: application/json` header.
 - Agent generates a random token for its local Jupyter Server. On restart, it kills any existing process on the port to avoid token mismatch.
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
+- Agent automatically culls idle kernels (1 hour timeout, checks every 5 minutes) to clean up stale kernel processes. Override with `-- --MappingKernelManager.cull_idle_timeout=0` to disable.
 - Agent sends both `Authorization` header (for extension mode) AND `token` field in register message (for standalone mode).
 - Agent supports `--extra-header Key:Value` (repeatable) for custom headers on all Hub requests (e.g., Cloudflare Access, custom API gateways). Extra headers are merged after the `Authorization` header, so they can also override it.
+- Agent supports passing extra arguments to Jupyter Server via `--` separator. All arguments after `--` are appended to the `jupyter_server` command (e.g., `agent --hub URL --name foo -- --ServerApp.allow_origin='*'`). Useful for custom Jupyter Server configurations without modifying agent code.
 - **Reverse proxy path**: When JupyterLab runs with `--ServerApp.base_url=/jupyter`, the Hub endpoint becomes `/jupyter/jrk/`. Agents must use the full path (e.g., `--hub http://host/jupyter/jrk`), not just `/jrk`.
 - **Tunnel heartbeat**: Agent uses `heartbeat=30.0` on the tunnel WS (`aiohttp` ping/pong) to prevent idle connection resets. Without this, the server may close the tunnel due to inactivity, causing `Connection reset by peer` (errno 54 on macOS).
 - **Kernel restore on reconnect**: When an agent disconnects, `on_close()` removes all its kernel mappings from `kernel_tunnel`. On re-registration, `_restore_kernels()` queries `GET /api/kernels` on the agent's local Jupyter Server and re-populates the mappings. Without this, existing kernels become unreachable after agent reconnect, causing "Lost connection to Gateway" loops.
@@ -106,7 +108,7 @@ All endpoints called by GatewayClient and their implementation status:
 - **Agent starts Jupyter via `python3 -m jupyter_server`**: NOT `python3 -m jupyter server`. The latter relies on `jupyter` dispatching to a `jupyter-server` script in PATH, which fails on systems where user Python bin is not in PATH (e.g., macOS Xcode Python 3.9 with user packages at `~/Library/Python/3.9/bin`).
 - **Auto-enable doesn't work with editable install**: `pip install -e .` does NOT install `data_files`. Must manually copy `jupyter-config/server_config.d/jupyter_remote_kernel.json` to `<prefix>/etc/jupyter/jupyter_server_config.d/`, or run `jupyter server extension enable jupyter_remote_kernel`.
 - **Multiple Python installs on remote machines**: When deploying the agent, the `jupyter-remote-kernel` binary's shebang determines which Python runs it. If a machine has multiple Pythons (e.g., system Python 3.9, Homebrew Python 3.13, Conda), you must `pip install` using the same Python that is in PATH. Verify with `head -1 $(which jupyter-remote-kernel)`.
-- **Agent `--debug` flag**: Prints all tunnel WebSocket messages (`[DEBUG] RECV/SEND`) with type, req_id/ws_id, and truncated data/body (200 chars). Useful for verifying messages flow bidirectionally.
+- **Agent `--debug` flag**: Prints all tunnel WebSocket messages (`[DEBUG] RECV/SEND`) with type, req_id/ws_id, and complete data/body fields. Useful for verifying messages flow bidirectionally.
 - **GatewayKernelClient monkey-patches** (in `server_extension.py`): Two patches applied at module load time to fix compatibility with `jupyter-server-nbmodel`'s `POST /api/kernels/{id}/execute` endpoint:
   1. **`start_channels()` deadlock + auth fix**: Original `start_channels()` calls `websocket.create_connection()` synchronously (deadlock) and without auth headers (403). Fix: run in `loop.run_in_executor()` and pass `{auth_header_key: auth_scheme + auth_token}` in `header=`.
   2. **`execute_interactive()` ZMQ Poller fix**: Base class `_async_execute_interactive()` uses `zmq.asyncio.Poller` which requires a `.socket` attribute on each channel. `GatewayKernelClient` channels are `ChannelQueue` objects (WebSocket-backed) with no `.socket`. Fix: replace the ZMQ poll loop with `ChannelQueue.get_msg()` calls. Must also explicitly set `GatewayKernelClient.execute_interactive = <new_func>` because `AsyncKernelClient` assigns `execute_interactive` as a direct class attribute (bypassing MRO).
@@ -131,6 +133,10 @@ jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token 
 # Agent with extra headers (e.g., behind Cloudflare Access)
 jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test \
   --extra-header "CF-Access-Client-Id:abc" --extra-header "CF-Access-Client-Secret:xyz"
+
+# Agent with custom Jupyter Server arguments (passed after --)
+jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test \
+  -- --ServerApp.allow_origin='*' --ServerApp.terminals_enabled=False
 
 # Standalone mode
 jupyter-remote-kernel hub --port 8765 --token my-secret
