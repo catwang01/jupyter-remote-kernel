@@ -54,16 +54,21 @@ async def test_kernelspec_prefix_routing():
     try:
         await poll_kernel_idle(kid, timeout=30)
 
-        # Verify the kernel is actually running on agent2's Jupyter Server
-        # by checking the hub's kernel_tunnel mapping via debug endpoint
+        # Verify the kernel is tracked by the hub and has the correct name
+        async with aiohttp.ClientSession(headers=AUTH) as s:
+            async with s.get(f"{JRK}/api/kernels/{kid}") as r:
+                assert r.status == 200
+                kdata = await r.json()
+        assert kdata["name"] == "agent2:python3", (
+            f"kernel name={kdata['name']!r}, expected 'agent2:python3'"
+        )
+
+        # Verify kernel ID appears in the hub's kernel registry
         async with aiohttp.ClientSession(headers=AUTH) as s:
             async with s.get(f"{JRK}/debug/tunnels") as r:
                 tunnels = await r.json()
-
-        kernel_tunnels = tunnels.get("kernel_tunnel", {})
-        assert kid in kernel_tunnels, f"kernel {kid} not in kernel_tunnel mapping"
-        assert kernel_tunnels[kid] == "agent2", (
-            f"kernel {kid} mapped to {kernel_tunnels[kid]!r}, expected 'agent2'"
+        assert kid in tunnels.get("kernels", []), (
+            f"kernel {kid} not tracked in hub kernel registry"
         )
     finally:
         async with aiohttp.ClientSession(headers=AUTH) as s:

@@ -43,7 +43,7 @@ async def test_agent_disconnect_cleans_state(restartable_agent):
         async with aiohttp.ClientSession(headers=AUTH) as s:
             async with s.get(f"{JRK}/debug/tunnels") as r:
                 data = await r.json()
-        if "agent-restart-test" not in data.get("tunnels", {}):
+        if "agent-restart-test" not in data.get("tunnels", []):
             return
         time.sleep(0.5)
 
