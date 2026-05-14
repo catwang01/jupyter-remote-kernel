@@ -159,6 +159,17 @@ class Hub:
                 stale = [kid for kid, t in self.kernel_tunnel.items() if t is tunnel]
                 for kid in stale:
                     self.kernel_tunnel.pop(kid, None)
+                for q in tunnel._ws_queues.values():
+                    q.put_nowait(None)
+                tunnel._ws_queues.clear()
+                for f in tunnel._http.values():
+                    if not f.done():
+                        f.set_exception(ConnectionError("tunnel closed"))
+                tunnel._http.clear()
+                for f in tunnel._ws_open.values():
+                    if not f.done():
+                        f.set_exception(ConnectionError("tunnel closed"))
+                tunnel._ws_open.clear()
                 print(f"[Hub] - {tunnel.name}")
         return ws
 

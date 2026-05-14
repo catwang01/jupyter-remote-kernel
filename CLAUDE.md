@@ -108,8 +108,13 @@ All endpoints called by GatewayClient and their implementation status:
 - **Notebook kernelspec metadata**: Notebooks must have both `name` and `display_name` in `metadata.kernelspec`. Missing `display_name` causes repeated `Notebook JSON is invalid` errors on save (though it does not block execution directly).
 - **Extension loading: `__init__.py` is critical**: `jupyter_server` imports the top-level package (`jupyter_remote_kernel`), NOT `server_extension.py` directly. So `__init__.py` MUST re-export `_jupyter_server_extension_points` from `server_extension.py`. Without this, extension loading fails with `_load_jupyter_server_extension function was not found`.
 - **Agent starts Jupyter via `python3 -m jupyter_server`**: NOT `python3 -m jupyter server`. The latter relies on `jupyter` dispatching to a `jupyter-server` script in PATH, which fails on systems where user Python bin is not in PATH (e.g., macOS Xcode Python 3.9 with user packages at `~/Library/Python/3.9/bin`).
+- **Agent `--allow-root`**: The agent's local Jupyter Server command includes `--allow-root` to support running as root (e.g., on cloud servers). Without this, Jupyter Server refuses to start and the agent times out after 30s.
+- **Agent hub URL must use public hostname**: When the agent runs on the same server as frps (e.g., Aliyun), it must connect to the hub via the public hostname (e.g., `http://catwang.top/jupyter/jrk`), NOT `http://localhost/...`. Connecting via localhost hits frps's bound port but results in 404 because the loopback path doesn't proxy correctly.
 - **Auto-enable doesn't work with editable install**: `pip install -e .` does NOT install `data_files`. Must manually copy `jupyter-config/server_config.d/jupyter_remote_kernel.json` to `<prefix>/etc/jupyter/jupyter_server_config.d/`, or run `jupyter server extension enable jupyter_remote_kernel`.
 - **Multiple Python installs on remote machines**: When deploying the agent, the `jupyter-remote-kernel` binary's shebang determines which Python runs it. If a machine has multiple Pythons (e.g., system Python 3.9, Homebrew Python 3.13, Conda), you must `pip install` using the same Python that is in PATH. Verify with `head -1 $(which jupyter-remote-kernel)`.
+- **Windows deployment (JD Cloud)**: Agent runs on Windows with miniconda Python 3.13. Install via wheel transfer (`scp` + `pip install --no-index`) due to socket exhaustion from `xtquant_server`. The server has ~5985 SYN_SENT connections to `127.0.0.1:58610` consuming ephemeral ports, causing intermittent `WinError 10055` (WSAENOBUFS). Agent itself only needs 1 persistent WS connection so this doesn't block operation once started. Use `.ps1` script files for complex PowerShell commands via SSH (multiline quoting issues). Auto-start configured via `schtasks` (Windows Task Scheduler) with task name `JupyterRemoteKernelAgent`, `python.exe -u C:\Users\administrator\run_agent.py`. GUI apps (e.g., 同花顺/hexin.exe) also use `schtasks` — NSSM is unsuitable for GUI apps as Windows Services run in Session 0 (isolated from desktop).
+- **Windows agent requires wrapper script**: `python -m jupyter_remote_kernel` fails because the package has no `__main__.py`. On Windows, use a wrapper script (`run_agent.py`) that sets `sys.argv`, redirects stdout/stderr to a log file (line-buffered), and calls `from jupyter_remote_kernel.cli import main; main()`. Log redirection must be done in-process because `Start-Process -RedirectStandardOutput` produces empty logs.
+- **SSH + Windows Job Object kills child processes**: On Windows, SSH creates a Job Object that kills all descendant processes when the session ends. `Start-Process` and `pythonw.exe` do NOT escape this. Only `schtasks` (Task Scheduler) creates truly independent processes that survive SSH disconnection.
 - **Agent `--debug` flag**: Prints all tunnel WebSocket messages (`[DEBUG] RECV/SEND`) with type, req_id/ws_id, and complete data/body fields. Useful for verifying messages flow bidirectionally.
 - **GatewayKernelClient monkey-patches** (in `server_extension.py`): Two patches applied at module load time to fix compatibility with `jupyter-server-nbmodel`'s `POST /api/kernels/{id}/execute` endpoint:
   1. **`start_channels()` deadlock + auth fix**: Original `start_channels()` calls `websocket.create_connection()` synchronously (deadlock) and without auth headers (403). Fix: run in `loop.run_in_executor()` and pass `{auth_header_key: auth_scheme + auth_token}` in `header=`.
@@ -150,6 +155,25 @@ jupyter lab --GatewayClient.url=http://hub-host:8765 --GatewayClient.auth_token=
 # With base_url (e.g., behind reverse proxy)
 # Agent must include the full base_url path:
 jupyter-remote-kernel agent --hub http://host/jupyter/jrk --name test --token <token>
+
+# Aliyun agent (systemd service on catwang.top, connects to myjupyterlab hub)
+# Service: /etc/systemd/system/jupyter-remote-kernel-agent.service
+# Install: /opt/jupyter-remote-kernel/venv/
+jupyter-remote-kernel agent --hub http://catwang.top/jupyter/jrk --name aliyun --token <token>
+
+# JD Cloud agent (Windows, 117.72.145.38, user: administrator)
+# Python: miniconda 3.13 at C:\ProgramData\miniconda3\python.exe
+# Binary: C:\ProgramData\miniconda3\Scripts\jupyter-remote-kernel.exe
+# Install: scp wheel + pip install --no-index (socket exhaustion blocks PyPI)
+# Auto-start: schtasks (Task Scheduler), task name "JupyterRemoteKernelAgent", triggers on logon
+jupyter-remote-kernel agent --hub http://catwang.top/jupyter/jrk --name jd-cloud --token <token>
+
+# localmac agent (this Mac, connects directly to myjupyterlab container, no frp)
+# PID-based process — not in Docker, not systemd. Start manually or via launchctl.
+jupyter-remote-kernel agent --hub http://localhost:8888/jupyter/jrk --name localmac --token <token>
+
+# edmac agent (Ed's Mac)
+jupyter-remote-kernel agent --hub http://catwang.top/jupyter/jrk --name edmac --token <token>
 ```
 
 ## Dependencies
@@ -188,3 +212,7 @@ See "Known Issues" for details.
   - **Upstream fix still needed**: `jupyter_server`'s `GatewayKernelClient.start_channels()` should pass auth headers and use `run_in_executor` to avoid deadlock when the gateway is in the same process.
 - **Missing `/api/sessions` endpoint**: Hub does not implement `/api/sessions`. Some GatewayClient versions may proxy sessions through the gateway; if so, the 404 could prevent proper session-kernel binding and code execution.
 - **Multiple JupyterLab processes on same port**: If JupyterLab is not cleanly killed (e.g., `kill` sent but process lingers), subsequent starts silently bind to next available port (8891, 8892...) while `GatewayClient.url` still points to 8890. Always verify with `ps aux | grep jupyterlab` and kill all stale processes before restarting.
+- **Kernel stuck in "starting" after creation**: When `POST /api/kernels` succeeds (kernel ID returned), the kernel may remain in `execution_state: "starting"` with `connections: 0` indefinitely. The remote agent's local Jupyter Server created the kernel entry but the `ipykernel` process didn't fully initialize. **Fix**: `POST /api/kernels/{id}/restart` — this reliably transitions the kernel to `idle`. Root cause unclear (likely race condition in ipykernel startup on the remote machine). Observed on `local-machine` agent (2026-05-13).
+- **Stale kernel accumulation in `hub_state.kernel_tunnel`**: The hub tracks kernel→tunnel mappings in memory. Over time, kernels that have died on the remote side remain in this dict (observed 53 tracked kernels while only ~5 were actually alive). `_restore_kernels()` on agent reconnect adds back all kernels reported by the agent's local Jupyter Server, including dead ones. No cleanup mechanism exists for kernels that failed to start or crashed.
+- **`on_close()` queue/future cleanup (FIXED 2026-05-13)**: When an agent's tunnel WebSocket disconnects, `on_close()` now drains `_ws_queues` with `None` sentinels, rejects pending `_http` and `_ws_open` futures with `ConnectionError("tunnel closed")`, then clears all dicts. Fixed in both `server_extension.py` and `hub.py`. Previously, `_relay_from_remote` tasks hung forever on `queue.get()`, causing "Lost connection to Gateway" loops.
+- **frp tunnel instability → 502/Server disconnected**: Aliyun agent connects through frps → frpc → mynginx → myjupyterlab. When the frp TCP tunnel between frps and frpc drops (network jitter, idle timeout), nginx returns 502 Bad Gateway. The agent sees alternating `Server disconnected` and `502 Invalid response status` errors. Agent auto-reconnects (5s retry), but each drop causes all active kernel WS channels to die. nginx `proxy_read_timeout: 120s` is in `jupyterlab.conf`; agent heartbeat is 30s — sufficient for nginx but not for frp's own tunnel timeout settings.

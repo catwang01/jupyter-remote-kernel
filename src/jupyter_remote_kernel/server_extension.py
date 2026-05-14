@@ -208,6 +208,17 @@ class AgentTunnelHandler(JupyterHandler, tornado.websocket.WebSocketHandler):
             dead = [k for k, t in list(self.hub_state.kernel_tunnel.items()) if t is self]
             for k in dead:
                 self.hub_state.kernel_tunnel.pop(k, None)
+            for q in self._ws_queues.values():
+                q.put_nowait(None)
+            self._ws_queues.clear()
+            for f in self._http.values():
+                if not f.done():
+                    f.set_exception(ConnectionError("tunnel closed"))
+            self._http.clear()
+            for f in self._ws_open.values():
+                if not f.done():
+                    f.set_exception(ConnectionError("tunnel closed"))
+            self._ws_open.clear()
             print(f"[JRK] - {self.name}")
 
     # ── Dispatch incoming frames from agent ───────────────────────────────────

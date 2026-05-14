@@ -148,6 +148,12 @@ curl http://localhost:9100/debug/tunnels
 
 4. **Reverse proxy base_url**: When JupyterLab runs with a `base_url` (e.g., `--ServerApp.base_url=/jupyter`), the agent must include the full path: `--hub http://host/jupyter/jrk`. Using just `/jrk` without the base_url prefix results in 404.
 
+5. **Kernel stuck in "starting" after creation**: A newly created kernel may remain in `starting` state with 0 connections indefinitely. The `ipykernel` process on the remote machine failed to fully initialize. Fix: restart the kernel via `POST /api/kernels/{id}/restart` — this reliably transitions it to `idle`.
+
+6. **Tunnel disconnect and kernel channel hang** (fixed): When the agent's tunnel WebSocket drops (frp instability, network timeout, agent restart), existing kernel channels previously hung indefinitely because `on_close()` did not drain pending queues/futures. Now fixed: `on_close()` sends `None` sentinels to all WS queues and rejects all pending HTTP/WS-open futures with `ConnectionError`, so relay tasks terminate immediately. Kernel restore still happens automatically on agent re-registration.
+
+7. **frp tunnel instability**: When using frp (fast reverse proxy) as the transport layer, the tunnel WebSocket may receive 502 Bad Gateway or "Server disconnected" errors during frps/frpc restarts or network hiccups. The agent auto-reconnects with a 5-second backoff, and kernels are restored on re-registration.
+
 ## Development
 
 ```bash
