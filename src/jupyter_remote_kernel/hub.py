@@ -155,6 +155,10 @@ class Hub:
         finally:
             if tunnel:
                 self.tunnels.pop(tunnel.name, None)
+                # Clean up kernel mappings belonging to this tunnel
+                stale = [kid for kid, t in self.kernel_tunnel.items() if t is tunnel]
+                for kid in stale:
+                    self.kernel_tunnel.pop(kid, None)
                 print(f"[Hub] - {tunnel.name}")
         return ws
 
