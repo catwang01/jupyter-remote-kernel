@@ -33,6 +33,8 @@ def main() -> None:
                     help="Hub auth token (required if Hub was started with --token)")
     ap.add_argument("--debug", action="store_true",
                     help="Print all WebSocket messages to stdout")
+    ap.add_argument("--extra-header", action="append", default=[], metavar="KEY:VALUE",
+                    help="Extra HTTP header added to all Hub requests (repeatable)")
 
     args = p.parse_args()
 
@@ -42,10 +44,17 @@ def main() -> None:
 
     elif args.cmd == "agent":
         from .agent import RemoteAgent
+        extra_headers = {}
+        for h in args.extra_header:
+            if ":" not in h:
+                p.error(f"--extra-header must be KEY:VALUE, got: {h!r}")
+            k, _, v = h.partition(":")
+            extra_headers[k.strip()] = v.strip()
         asyncio.run(RemoteAgent(
             args.hub, args.name, args.jupyter_port, args.root_dir,
             hub_token=args.token,
             debug=args.debug,
+            extra_headers=extra_headers,
         ).run())
 
 

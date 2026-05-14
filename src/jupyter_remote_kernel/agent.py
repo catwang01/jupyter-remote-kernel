@@ -31,12 +31,13 @@ _TRUNCATE = 200  # max chars shown for data/body fields in debug output
 
 
 class RemoteAgent:
-    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False):
+    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None):
         base = hub_url.rstrip("/")
         ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
         self.tunnel_url = f"{ws_base}/tunnel/register"
         self.name = name
         self.hub_token = hub_token
+        self.extra_headers: Dict[str, str] = extra_headers or {}
         self.debug = debug
         self.jupyter_port = jupyter_port or _free_port()
         self.root_dir = root_dir
@@ -223,6 +224,7 @@ class RemoteAgent:
                         headers = {}
                         if self.hub_token:
                             headers["Authorization"] = f"token {self.hub_token}"
+                        headers.update(self.extra_headers)
                         async with session.ws_connect(self.tunnel_url, headers=headers, heartbeat=30.0) as ws:
                             await ws.send_json({"type": "register", "name": self.name, "token": self.hub_token})
 
