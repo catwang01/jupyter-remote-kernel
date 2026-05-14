@@ -187,7 +187,14 @@ class AgentTunnelHandler(JupyterHandler, tornado.websocket.WebSocketHandler):
         data = json.loads(raw)
         t = data.get("type")
         if t == "register":
-            self.name = data["name"]
+            name = data["name"]
+            # Check for duplicate agent name
+            if name in self.hub_state.tunnels:
+                self.write_message(json.dumps({"type": "error", "message": f"agent name '{name}' already registered"}))
+                print(f"[JRK] x {name} (rejected: duplicate name)")
+                self.close(4409, f"agent name '{name}' already registered")
+                return
+            self.name = name
             self.hub_state.tunnels[self.name] = self
             print(f"[JRK] + {self.name}")
             self.write_message(json.dumps({"type": "registered"}))

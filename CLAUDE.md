@@ -83,9 +83,10 @@ All endpoints called by GatewayClient and their implementation status:
 1. **No ZMQ bridging** — The remote Jupyter Server handles ZMQ internally. We only proxy at the HTTP/WS level (single port).
 2. **Single tunnel WebSocket** — All traffic (multiple HTTP requests, multiple kernel WS connections) is multiplexed over one persistent WebSocket using `req_id` and `ws_id`.
 3. **Kernel naming**: `{agent_name}:{kernel_spec_name}` (e.g., `gpu-machine:python3`). Hub splits on first `:` to route to correct agent. **Both the dict key AND the `v["name"]` field must be set** — JupyterLab uses `name` field when creating kernels.
-4. **Files stay local** — JupyterLab manages files locally. Only kernel execution happens remotely.
-5. **Auth sharing** — Extension mode reuses JupyterLab's token; standalone mode uses its own `--token` flag.
-6. **Auto port selection** — Agent finds a free port automatically (`socket.bind(0)`), no manual `--jupyter-port` needed.
+4. **Agent name uniqueness**: Hub rejects duplicate agent names. If an agent tries to register with a name already in use, registration fails with error message and agent exits. Prevents kernel routing conflicts.
+5. **Files stay local** — JupyterLab manages files locally. Only kernel execution happens remotely.
+6. **Auth sharing** — Extension mode reuses JupyterLab's token; standalone mode uses its own `--token` flag.
+7. **Auto port selection** — Agent finds a free port automatically (`socket.bind(0)`), no manual `--jupyter-port` needed.
 
 ## Important Implementation Notes
 

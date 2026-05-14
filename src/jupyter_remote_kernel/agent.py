@@ -272,6 +272,11 @@ class RemoteAgent:
                                         # Start heartbeat task
                                         heartbeat_task = asyncio.create_task(self._heartbeat(session))
 
+                                    elif t == "error":
+                                        error_msg = data.get("message", "unknown error")
+                                        print(f"[Agent] Registration failed: {error_msg}")
+                                        raise RuntimeError(f"Hub rejected registration: {error_msg}")
+
                                     elif t == "http_req":
                                         asyncio.create_task(
                                             self._relay_http(session, ws, data)

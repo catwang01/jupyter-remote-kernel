@@ -139,6 +139,11 @@ class Hub:
                             await ws.send_json({"type": "error", "message": "unauthorized"})
                             break
                         name = data["name"]
+                        # Check for duplicate agent name
+                        if name in self.tunnels:
+                            await ws.send_json({"type": "error", "message": f"agent name '{name}' already registered"})
+                            print(f"[Hub] x {name} (rejected: duplicate name)")
+                            break
                         tunnel = TunnelConnection(ws, name)
                         self.tunnels[name] = tunnel
                         print(f"[Hub] + {name}")
