@@ -116,6 +116,36 @@ class RemoteAgent:
     def _auth(self) -> dict:
         return {"Authorization": f"token {self.token}"}
 
+    # ── Heartbeat ────────────────────────────────────────────────────────────
+
+    async def _heartbeat(self, session: aiohttp.ClientSession) -> None:
+        """Periodically print kernel status (runs every 10s)."""
+        while True:
+            try:
+                await asyncio.sleep(10)
+                async with session.get(
+                    f"{self.jupyter_base_http}/api/kernels",
+                    headers=self._auth(),
+                ) as r:
+                    if r.status == 200:
+                        kernels = await r.json()
+                        count = len(kernels)
+                        if count == 0:
+                            print(f"[Agent] Heartbeat: no kernels running")
+                        else:
+                            # Count by execution_state
+                            states = {}
+                            for k in kernels:
+                                state = k.get("execution_state", "unknown")
+                                states[state] = states.get(state, 0) + 1
+                            state_str = ", ".join(f"{n} {s}" for s, n in sorted(states.items()))
+                            print(f"[Agent] Heartbeat: {count} kernel(s) running ({state_str})")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                # Silently ignore errors (e.g., Jupyter Server not responding)
+                pass
+
     # ── Relay: HTTP ──────────────────────────────────────────────────────────
 
     async def _relay_http(
@@ -223,6 +253,7 @@ class RemoteAgent:
         try:
             async with aiohttp.ClientSession() as session:
                 while True:
+                    heartbeat_task = None
                     try:
                         headers = {}
                         if self.hub_token:
@@ -238,6 +269,8 @@ class RemoteAgent:
 
                                     if t == "registered":
                                         print(f"[Agent] Registered as '{self.name}' — ready")
+                                        # Start heartbeat task
+                                        heartbeat_task = asyncio.create_task(self._heartbeat(session))
 
                                     elif t == "http_req":
                                         asyncio.create_task(
@@ -274,5 +307,13 @@ class RemoteAgent:
                     except Exception as e:
                         print(f"[Agent] Lost connection: {e}  — retrying in 5 s ...")
                         await asyncio.sleep(5)
+                    finally:
+                        # Cancel heartbeat task on disconnect
+                        if heartbeat_task and not heartbeat_task.done():
+                            heartbeat_task.cancel()
+                            try:
+                                await heartbeat_task
+                            except asyncio.CancelledError:
+                                pass
         finally:
             proc.kill()

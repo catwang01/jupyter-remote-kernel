@@ -95,6 +95,7 @@ All endpoints called by GatewayClient and their implementation status:
 - Agent generates a random token for its local Jupyter Server. On restart, it kills any existing process on the port to avoid token mismatch.
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
 - Agent automatically culls idle kernels (1 hour timeout, checks every 5 minutes) to clean up stale kernel processes. Override with `-- --MappingKernelManager.cull_idle_timeout=0` to disable.
+- Agent prints heartbeat messages every 10 seconds showing kernel count and execution states (e.g., `[Agent] Heartbeat: 3 kernel(s) running (2 idle, 1 busy)`). Queries local Jupyter Server's `/api/kernels` endpoint.
 - Agent sends both `Authorization` header (for extension mode) AND `token` field in register message (for standalone mode).
 - Agent supports `--extra-header Key:Value` (repeatable) for custom headers on all Hub requests (e.g., Cloudflare Access, custom API gateways). Extra headers are merged after the `Authorization` header, so they can also override it.
 - Agent supports passing extra arguments to Jupyter Server via `--` separator. All arguments after `--` are appended to the `jupyter_server` command (e.g., `agent --hub URL --name foo -- --ServerApp.allow_origin='*'`). Useful for custom Jupyter Server configurations without modifying agent code.
