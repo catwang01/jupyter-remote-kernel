@@ -90,12 +90,13 @@ jupyter-remote-kernel agent --hub http://<hub-url> --name my-machine --token <to
 
 Options:
 - `--hub URL` — Hub endpoint (required)
-- `--name NAME` — Display name, used as kernel prefix in JupyterLab (required)
+- `--name NAME` — Display name, used as kernel prefix in JupyterLab (required). Must be unique across all connected agents
 - `--token TOKEN` — Auth token (required if Hub/JupyterLab has token auth)
 - `--jupyter-port PORT` — Local Jupyter Server port (default: auto-selects free port)
 - `--root-dir DIR` — Kernel working directory (created if absent)
 - `--debug` — Print all tunnel WebSocket messages to stdout (useful for troubleshooting)
 - `--extra-header KEY:VALUE` — Extra HTTP header added to all Hub requests (repeatable, useful for reverse proxies like Cloudflare Access)
+- `-- <args>` — Pass extra arguments to the underlying Jupyter Server (e.g., `-- --ServerApp.allow_origin='*'`)
 
 ## Authentication
 
@@ -139,7 +140,7 @@ curl http://localhost:9100/debug/tunnels
 
 ## Known Issues
 
-1. **Duplicate agent names**: If two agents register with the same name, the second overwrites the first. When either disconnects, the name is removed.
+1. **Duplicate agent names**: Hub rejects registration if an agent with the same name is already connected. The second agent exits with an error message.
 
 2. **macOS firewall blocks background processes**: On macOS, `nohup` processes may be blocked from outbound connections. Workaround: SSH reverse port forwarding (`ssh -f -N -R <port>:localhost:<port> user@remote`).
 
