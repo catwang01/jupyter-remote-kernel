@@ -1,8 +1,10 @@
 """Tests for kernel lifecycle: agent-side kill, hub-side kill, and kill when agent gone."""
 
 import asyncio
+import json
 import subprocess
 import time
+import uuid
 
 import aiohttp
 import pytest
@@ -112,3 +114,41 @@ async def test_hub_delete_when_agent_gone():
                 proc.wait(timeout=5)
             except Exception:
                 pass
+
+
+async def test_execute_on_deleted_kernel():
+    """WS connect to a deleted kernel is rejected with close code 4404."""
+    async with aiohttp.ClientSession(headers=AUTH) as s:
+        async with s.post(f"{JRK}/api/kernels", json={"name": "agent1:python3"}) as r:
+            assert r.status in (200, 201)
+            kid = (await r.json())["id"]
+
+    await poll_kernel_idle(kid, timeout=30)
+
+    # Delete the kernel
+    async with aiohttp.ClientSession(headers=AUTH) as s:
+        async with s.delete(f"{JRK}/api/kernels/{kid}") as r:
+            assert r.status == 204
+
+    # Attempt to open a WS channel on the now-deleted kernel
+    ws_url = f"ws://localhost:18890/jrk/api/kernels/{kid}/channels"
+    close_code = None
+    async with aiohttp.ClientSession() as s:
+        try:
+            async with s.ws_connect(
+                ws_url,
+                headers=AUTH,
+                timeout=aiohttp.ClientWSTimeout(ws_close=10),
+            ) as ws:
+                # Server should immediately close with 4404
+                async for msg in ws:
+                    if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                        close_code = ws.close_code
+                        break
+                close_code = ws.close_code
+        except Exception:
+            pass  # connection may be refused outright
+
+    assert close_code == 4404, (
+        f"Expected WS close code 4404 for deleted kernel, got {close_code}"
+    )
