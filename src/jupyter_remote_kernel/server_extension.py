@@ -28,6 +28,7 @@ import uuid
 from queue import Empty
 from typing import Dict, Optional
 
+import tornado.ioloop
 import tornado.web
 import tornado.websocket
 from jupyter_server.base.handlers import JupyterHandler
@@ -84,19 +85,38 @@ def _patch_gateway_kernel_client():
         timeout = gc.KERNEL_LAUNCH_TIMEOUT
         auth_header = {gc.auth_header_key: f"{gc.auth_scheme} {gc.auth_token}"}
         loop = asyncio.get_event_loop()
-        self.channel_socket = await loop.run_in_executor(
-            None,
-            lambda: _ws.create_connection(
+
+        def _connect():
+            ws = _ws.create_connection(
                 ws_url, timeout=timeout, enable_multithread=True,
                 sslopt=ssl_options, header=auth_header,
-            ),
-        )
+            )
+            # timeout applies to both connect AND recv; remove it after
+            # connection so long-running executions don't kill response_router
+            ws.settimeout(None)
+            return ws
+
+        self.channel_socket = await loop.run_in_executor(None, _connect)
         await ensure_async(
             super(GatewayKernelClient, self).start_channels(
                 shell=shell, iopub=iopub, stdin=stdin, hb=hb, control=control)
         )
+        import logging as _logging
+        _jrk_log = _logging.getLogger("jupyter_remote_kernel")
+
+        def _guarded_route_responses():
+            try:
+                self._route_responses()
+            except Exception as e:
+                _jrk_log.error(
+                    "[JRK] response_router died — kernel channel broken: %r\n"
+                    "      All subsequent execute_interactive() calls will hang.\n"
+                    "      Cause: likely websocket recv() timeout or connection drop.",
+                    e,
+                )
+
         from threading import Thread
-        self.response_router = Thread(target=self._route_responses)
+        self.response_router = Thread(target=_guarded_route_responses, daemon=True)
         self.response_router.start()
 
     GatewayKernelClient.start_channels = _start_channels_nonblocking
@@ -158,6 +178,21 @@ class HubState:
     def __init__(self):
         self.tunnels: Dict[str, "AgentTunnelHandler"] = {}
         self.kernel_tunnel: Dict[str, "AgentTunnelHandler"] = {}
+
+    async def prune_stale_kernels(self) -> None:
+        """For each connected agent, remove kernel_tunnel entries no longer alive."""
+        for name, tunnel in list(self.tunnels.items()):
+            try:
+                res = await tunnel.relay_http("GET", "/api/kernels")
+                alive = {k["id"] for k in json.loads(res["body"]) if k.get("id")}
+                stale = [kid for kid, t in list(self.kernel_tunnel.items())
+                         if t is tunnel and kid not in alive]
+                for kid in stale:
+                    self.kernel_tunnel.pop(kid, None)
+                if stale:
+                    print(f"[JRK] pruned {len(stale)} stale kernel(s) for {name}")
+            except Exception as e:
+                print(f"[JRK] failed to prune stale kernels for {name}: {e}")
 
 
 # ── Agent tunnel WebSocket handler ────────────────────────────────────────────
@@ -262,16 +297,25 @@ class AgentTunnelHandler(JupyterHandler, tornado.websocket.WebSocketHandler):
         return await asyncio.wait_for(f, timeout=30.0)
 
     async def _restore_kernels(self) -> None:
-        """On reconnect, re-populate kernel_tunnel for kernels still running on this agent."""
+        """On reconnect, reconcile kernel_tunnel for this agent: remove stale + add missing."""
         try:
             res = await self.relay_http("GET", "/api/kernels")
             kernels = json.loads(res["body"])
+            alive_ids = {k["id"] for k in kernels if k.get("id")}
+
+            stale = [kid for kid, t in list(self.hub_state.kernel_tunnel.items())
+                     if t is self and kid not in alive_ids]
+            for kid in stale:
+                self.hub_state.kernel_tunnel.pop(kid, None)
+
             restored = 0
-            for k in kernels:
-                kid = k.get("id")
-                if kid and kid not in self.hub_state.kernel_tunnel:
+            for kid in alive_ids:
+                if kid not in self.hub_state.kernel_tunnel:
                     self.hub_state.kernel_tunnel[kid] = self
                     restored += 1
+
+            if stale:
+                print(f"[JRK] pruned {len(stale)} stale kernel(s) for {self.name} on reconnect")
             if restored:
                 print(f"[JRK] restored {restored} kernel(s) for {self.name}")
         except Exception as e:
@@ -573,6 +617,12 @@ class JupyterRemoteKernelExtension(ExtensionApp):
             (r"/jrk/api/kernels/([^/]+)/(restart|interrupt)", KernelActionHandler),
             (r"/jrk/api/kernels/([^/]+)",                    KernelHandler),
         ]
+        pc = tornado.ioloop.PeriodicCallback(
+            lambda: asyncio.ensure_future(hs.prune_stale_kernels()),
+            5 * 60 * 1000,
+        )
+        pc.start()
+        self.settings["jrk_prune_callback"] = pc
 
 
 def _jupyter_server_extension_points():

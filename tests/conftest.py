@@ -99,3 +99,30 @@ async def kernel(agent1):
     async with aiohttp.ClientSession(headers=AUTH) as session:
         async with session.delete(f"{JRK}/api/kernels/{kid}") as r:
             pass  # ignore teardown errors
+
+
+@pytest.fixture
+async def kernel_via_jlab(agent1):
+    """Function-scoped fixture: create kernel via JupyterLab's native /api/kernels.
+
+    JupyterLab registers this kernel in its GatewayMappingKernelManager, so
+    /api/kernels/{id}/channels (the path used by browser clients and MCP tools)
+    can proxy it through GatewayClient to JRK.  Kernels created directly via
+    /jrk/api/kernels are unknown to JupyterLab and return 404 on that path.
+    """
+    async with aiohttp.ClientSession(headers=AUTH) as session:
+        async with session.post(
+            f"{BASE_URL}/api/kernels",
+            json={"name": "agent1:python3"},
+        ) as r:
+            assert r.status in (200, 201), f"kernel create failed: {r.status}"
+            data = await r.json()
+            kid = data["id"]
+
+    await poll_kernel_idle(kid, timeout=30)
+
+    yield kid
+
+    async with aiohttp.ClientSession(headers=AUTH) as session:
+        async with session.delete(f"{BASE_URL}/api/kernels/{kid}") as r:
+            pass  # ignore teardown errors

@@ -74,16 +74,24 @@ async def poll_kernel_idle(kernel_id: str, timeout: int = 30) -> None:
     raise TimeoutError(f"Kernel {kernel_id} did not reach idle within {timeout}s")
 
 
-async def ws_execute(kernel_id: str, code: str, timeout: int = 30) -> dict:
+async def ws_execute(kernel_id: str, code: str, timeout: int = 30, via_jlab: bool = False) -> dict:
     """
-    Open WS to /jrk/api/kernels/{id}/channels, send execute_request,
-    collect stream/execute_result/execute_reply, return result dict.
+    Execute code in a kernel via WebSocket and return the result.
+
+    via_jlab=False (default): connects directly to /jrk/api/kernels/{id}/channels
+    via_jlab=True: connects to JupyterLab's native /api/kernels/{id}/channels,
+                   which proxies through GatewayClient to JRK — the same path
+                   used by MCP tools and browser clients.
 
     Returns:
         {"output": str, "status": "ok"|"error", "execution_count": int,
          "ename": str|None, "evalue": str|None}
     """
-    ws_url = f"ws://127.0.0.1:18890/jrk/api/kernels/{kernel_id}/channels"
+    if via_jlab:
+        ws_url = f"ws://127.0.0.1:18890/api/kernels/{kernel_id}/channels"
+    else:
+        ws_url = f"ws://127.0.0.1:18890/jrk/api/kernels/{kernel_id}/channels"
+
     msg_id = str(uuid.uuid4())
     session_id = str(uuid.uuid4())
 

@@ -173,6 +173,26 @@ class Hub:
                 print(f"[Hub] - {tunnel.name}")
         return ws
 
+    async def prune_stale_kernels(self) -> None:
+        """For each connected agent, remove kernel_tunnel entries no longer alive."""
+        for name, tunnel in list(self.tunnels.items()):
+            try:
+                res = await tunnel.http("GET", "/api/kernels")
+                alive = {k["id"] for k in json.loads(res["body"]) if k.get("id")}
+                stale = [kid for kid, t in list(self.kernel_tunnel.items())
+                         if t is tunnel and kid not in alive]
+                for kid in stale:
+                    self.kernel_tunnel.pop(kid, None)
+                if stale:
+                    print(f"[Hub] pruned {len(stale)} stale kernel(s) for {name}")
+            except Exception as e:
+                print(f"[Hub] failed to prune stale kernels for {name}: {e}")
+
+    async def _prune_loop(self) -> None:
+        while True:
+            await asyncio.sleep(5 * 60)
+            await self.prune_stale_kernels()
+
     # ── Jupyter Gateway API ──────────────────────────────────────────────────
 
     async def api_kernelspecs(self, request: web.Request) -> web.Response:
@@ -361,7 +381,19 @@ class Hub:
                     )
             return await handler(request)
 
+        async def on_startup(app: web.Application) -> None:
+            app["_prune_task"] = asyncio.create_task(self._prune_loop())
+
+        async def on_cleanup(app: web.Application) -> None:
+            app["_prune_task"].cancel()
+            try:
+                await app["_prune_task"]
+            except asyncio.CancelledError:
+                pass
+
         app = web.Application(middlewares=[auth_middleware])
+        app.on_startup.append(on_startup)
+        app.on_cleanup.append(on_cleanup)
         app.router.add_get("/debug/tunnels",                      self.debug_tunnels)
         app.router.add_get("/tunnel/register",                    self.handle_tunnel)
         app.router.add_get("/api/kernelspecs",                              self.api_kernelspecs)

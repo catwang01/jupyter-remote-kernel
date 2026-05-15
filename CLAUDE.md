@@ -109,6 +109,7 @@ All endpoints called by GatewayClient and their implementation status:
 - Agent generates a random token for its local Jupyter Server. On restart, it kills any existing process on the port to avoid token mismatch.
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
 - Agent automatically culls idle kernels (1 hour timeout, checks every 5 minutes) to clean up stale kernel processes. Override with `-- --MappingKernelManager.cull_idle_timeout=0` to disable.
+- Hub runs `prune_stale_kernels()` every 5 minutes: queries each connected agent's `/api/kernels`, removes `kernel_tunnel` entries for kernels that no longer exist on the remote side. Uses aiohttp `on_startup` background task in standalone mode and `tornado.ioloop.PeriodicCallback` in extension mode.
 - Agent prints heartbeat messages every 10 seconds showing kernel count and execution states (e.g., `[Agent] Heartbeat: 3 kernel(s) running (2 idle, 1 busy)`). Queries local Jupyter Server's `/api/kernels` endpoint.
 - Agent sends both `Authorization` header (for extension mode) AND `token` field in register message (for standalone mode).
 - Agent supports `--extra-header Key:Value` (repeatable) for custom headers on all Hub requests (e.g., Cloudflare Access, custom API gateways). Extra headers are merged after the `Authorization` header, so they can also override it.
@@ -130,7 +131,7 @@ All endpoints called by GatewayClient and their implementation status:
 - **SSH + Windows Job Object kills child processes**: On Windows, SSH creates a Job Object that kills all descendant processes when the session ends. `Start-Process` and `pythonw.exe` do NOT escape this. Only `schtasks` (Task Scheduler) creates truly independent processes that survive SSH disconnection.
 - **Agent `--debug` flag**: Prints all tunnel WebSocket messages (`[DEBUG] RECV/SEND`) with type, req_id/ws_id, and complete data/body fields. Useful for verifying messages flow bidirectionally.
 - **GatewayKernelClient monkey-patches** (in `server_extension.py`): Two patches applied at module load time to fix compatibility with `jupyter-server-nbmodel`'s `POST /api/kernels/{id}/execute` endpoint:
-  1. **`start_channels()` deadlock + auth fix**: Original `start_channels()` calls `websocket.create_connection()` synchronously (deadlock) and without auth headers (403). Fix: run in `loop.run_in_executor()` and pass `{auth_header_key: auth_scheme + auth_token}` in `header=`.
+  1. **`start_channels()` deadlock + auth fix**: Original `start_channels()` calls `websocket.create_connection()` synchronously (deadlock) and without auth headers (403). Fix: run in `loop.run_in_executor()` and pass `{auth_header_key: auth_scheme + auth_token}` in `header=`. After connection, `ws.settimeout(None)` removes the launch timeout from recv — without this, `response_router` dies after `KERNEL_LAUNCH_TIMEOUT` (40s) of no messages, silently killing the kernel channel. The `response_router` thread is wrapped in `_guarded_route_responses` which logs `[JRK] response_router died` at ERROR level if it exits unexpectedly (the original thread dies silently with no diagnostics).
   2. **`execute_interactive()` ZMQ Poller fix**: Base class `_async_execute_interactive()` uses `zmq.asyncio.Poller` which requires a `.socket` attribute on each channel. `GatewayKernelClient` channels are `ChannelQueue` objects (WebSocket-backed) with no `.socket`. Fix: replace the ZMQ poll loop with `ChannelQueue.get_msg()` calls. Must also explicitly set `GatewayKernelClient.execute_interactive = <new_func>` because `AsyncKernelClient` assigns `execute_interactive` as a direct class attribute (bypassing MRO).
 
 ## Build & Run
@@ -209,14 +210,14 @@ pytest tests/test_kernels.py -v
 
 **Test architecture**:
 - JupyterLab on `localhost:18890` with `token=test`, `GatewayClient.url=http://localhost:18890/jrk`
-- Two agents (`agent1`, `agent2`) as session-scoped fixtures; `kernel` fixture is function-scoped (creates + deletes per test)
-- `ws_execute()` helper opens WS to `/jrk/api/kernels/{id}/channels`, sends Jupyter wire protocol `execute_request`, collects `stream`/`execute_result`/`execute_reply`
+- Two agents (`agent1`, `agent2`) as session-scoped fixtures; `kernel` fixture is function-scoped (creates + deletes per test via `/jrk/api/kernels`); `kernel_via_jlab` fixture creates via JupyterLab's native `/api/kernels` (GatewayClient proxy path, same as MCP/browser)
+- `ws_execute()` helper supports two modes: direct JRK WS (`/jrk/api/kernels/{id}/channels`) or via JupyterLab proxy (`/api/kernels/{id}/channels`, triggered by `via_jlab=True`)
 - `pytest-asyncio` with `asyncio_mode=auto`; `pytest-timeout` at 120s per test
 
-**25 tests across 7 files**:
+**27 tests across 7 files**:
 - `test_kernelspecs.py` (4) — list, single, name field, default type
 - `test_kernels.py` (7) — create, get, list, aggregation across agents, delete, restart, interrupt
-- `test_execution.py` (3) — print, expression, error
+- `test_execution.py` (4) — print, expression, error, long-running via JupyterLab proxy (5s sleep regression)
 - `test_routing.py` (2) — agent routing isolation, prefix routing
 - `test_reconnect.py` (2) — agent disconnect cleanup, reconnect + new kernel
 - `test_errors.py` (3) — duplicate agent name, nonexistent kernel GET/DELETE
@@ -259,6 +260,6 @@ See "Known Issues" for details.
 - **Missing `/api/sessions` endpoint**: Hub does not implement `/api/sessions`. Some GatewayClient versions may proxy sessions through the gateway; if so, the 404 could prevent proper session-kernel binding and code execution.
 - **Multiple JupyterLab processes on same port**: If JupyterLab is not cleanly killed (e.g., `kill` sent but process lingers), subsequent starts silently bind to next available port (8891, 8892...) while `GatewayClient.url` still points to 8890. Always verify with `ps aux | grep jupyterlab` and kill all stale processes before restarting.
 - **Kernel stuck in "starting" after creation**: When `POST /api/kernels` succeeds (kernel ID returned), the kernel may remain in `execution_state: "starting"` with `connections: 0` indefinitely. The remote agent's local Jupyter Server created the kernel entry but the `ipykernel` process didn't fully initialize. **Fix**: `POST /api/kernels/{id}/restart` — this reliably transitions the kernel to `idle`. Root cause unclear (likely race condition in ipykernel startup on the remote machine). Observed on `local-machine` agent (2026-05-13).
-- **Stale kernel accumulation in `hub_state.kernel_tunnel`**: The hub tracks kernel→tunnel mappings in memory. Over time, kernels that have died on the remote side remain in this dict (observed 53 tracked kernels while only ~5 were actually alive). `_restore_kernels()` on agent reconnect adds back all kernels reported by the agent's local Jupyter Server, including dead ones. No cleanup mechanism exists for kernels that failed to start or crashed.
+- **Stale kernel accumulation in `hub_state.kernel_tunnel` (FIXED 2026-05-15)**: `_restore_kernels()` now reconciles on agent reconnect (removes stale entries for that agent + adds missing ones). Both `hub.py` and `server_extension.py` also run a periodic `prune_stale_kernels()` every 5 minutes: for each connected agent, queries `/api/kernels` and removes entries no longer alive. The periodic task is started via aiohttp `on_startup` in standalone mode and `tornado.ioloop.PeriodicCallback` in extension mode.
 - **`on_close()` queue/future cleanup (FIXED 2026-05-13)**: When an agent's tunnel WebSocket disconnects, `on_close()` now drains `_ws_queues` with `None` sentinels, rejects pending `_http` and `_ws_open` futures with `ConnectionError("tunnel closed")`, then clears all dicts. Fixed in both `server_extension.py` and `hub.py`. Previously, `_relay_from_remote` tasks hung forever on `queue.get()`, causing "Lost connection to Gateway" loops.
 - **frp tunnel instability → 502/Server disconnected**: Aliyun agent connects through frps → frpc → mynginx → myjupyterlab. When the frp TCP tunnel between frps and frpc drops (network jitter, idle timeout), nginx returns 502 Bad Gateway. The agent sees alternating `Server disconnected` and `502 Invalid response status` errors. Agent auto-reconnects (5s retry), but each drop causes all active kernel WS channels to die. nginx `proxy_read_timeout: 120s` is in `jupyterlab.conf`; agent heartbeat is 30s — sufficient for nginx but not for frp's own tunnel timeout settings.

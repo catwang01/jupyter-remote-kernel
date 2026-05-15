@@ -154,6 +154,8 @@ curl http://localhost:9100/debug/tunnels
 
 7. **frp tunnel instability**: When using frp (fast reverse proxy) as the transport layer, the tunnel WebSocket may receive 502 Bad Gateway or "Server disconnected" errors during frps/frpc restarts or network hiccups. The agent auto-reconnects with a 5-second backoff, and kernels are restored on re-registration.
 
+8. **Long-running executions killing kernel channels via GatewayKernelClient** (fixed): When server-side code (e.g., `jupyter-mcp-server`, `jupyter-server-nbmodel`) uses `GatewayKernelClient.start_channels()`, the underlying `websocket-client` library was created with `timeout=KERNEL_LAUNCH_TIMEOUT` (40s). This timeout applied to **both** connection establishment AND `recv()` calls. For long-running executions (>40s without output), `recv()` timed out in the `response_router` thread, which died silently — breaking all subsequent execute requests on that kernel. Fix: `ws.settimeout(None)` after `create_connection()` in the JRK monkey-patch removes the recv timeout while preserving the connection timeout.
+
 ## Development
 
 ```bash
@@ -168,6 +170,23 @@ jupyter lab --port=8890 --ServerApp.token=test \
 # In another terminal
 jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name local-test --token test
 ```
+
+### Automated Tests
+
+Integration tests spin up a JupyterLab process with the JRK extension and two agent subprocesses, then exercise the full Jupyter Gateway API (kernelspecs, kernel CRUD, WS code execution, agent routing, disconnect/reconnect, error paths).
+
+```bash
+# Install test dependencies
+pip install -e ".[test]"
+
+# Run all tests (~5 minutes)
+pytest tests/
+
+# Run with verbose output
+pytest tests/ -v
+```
+
+Tests require ports 18890+ to be free. See `tests/conftest.py` for fixture details.
 
 ## License
 
