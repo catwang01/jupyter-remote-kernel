@@ -98,6 +98,7 @@ All endpoints called by GatewayClient and their implementation status:
 5. **Files stay local** — JupyterLab manages files locally. Only kernel execution happens remotely.
 6. **Auth sharing** — Extension mode reuses JupyterLab's token; standalone mode uses its own `--token` flag.
 7. **Auto port selection** — Agent finds a free port automatically (`socket.bind(0)`), no manual `--jupyter-port` needed.
+8. **Auto agent name** — If `--name` is omitted, agent defaults to `{hostname}-{os}-{arch}` (e.g., `mypc-windows-amd64`). Uses `platform.node()`, `platform.system()`, `platform.machine()`.
 
 ## Important Implementation Notes
 
@@ -145,6 +146,9 @@ MCP_TOKEN=test jupyter lab --port=8890 --ServerApp.token=test \
 
 # Agent (connects to extension mode)
 jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test
+
+# Agent without --name (defaults to {hostname}-{os}-{arch})
+jupyter-remote-kernel agent --hub http://localhost:8890/jrk --token test
 
 # Agent with debug logging (prints all tunnel messages)
 jupyter-remote-kernel agent --hub http://localhost:8890/jrk --name test --token test --debug

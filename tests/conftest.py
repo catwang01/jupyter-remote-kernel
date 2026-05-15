@@ -25,8 +25,8 @@ def jupyterlab():
             "--GatewayClient.url=http://localhost:18890/jrk",
             f"--GatewayClient.auth_token={TOKEN}",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
         wait_for_http(f"{JRK}/api/kernelspecs", headers=AUTH, timeout=60)
@@ -47,8 +47,8 @@ def _start_agent(name: str) -> subprocess.Popen:
             "--name", name,
             "--token", TOKEN,
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 

@@ -131,7 +131,7 @@ async def test_execute_on_deleted_kernel():
             assert r.status == 204
 
     # Attempt to open a WS channel on the now-deleted kernel
-    ws_url = f"ws://localhost:18890/jrk/api/kernels/{kid}/channels"
+    ws_url = f"ws://127.0.0.1:18890/jrk/api/kernels/{kid}/channels"
     close_code = None
     async with aiohttp.ClientSession() as s:
         try:

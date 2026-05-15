@@ -90,7 +90,7 @@ jupyter-remote-kernel agent --hub http://<hub-url> --name my-machine --token <to
 
 Options:
 - `--hub URL` — Hub endpoint (required)
-- `--name NAME` — Display name, used as kernel prefix in JupyterLab (required). Must be unique across all connected agents
+- `--name NAME` — Display name, used as kernel prefix in JupyterLab (default: `{hostname}-{os}-{arch}`). Must be unique across all connected agents
 - `--token TOKEN` — Auth token (required if Hub/JupyterLab has token auth)
 - `--jupyter-port PORT` — Local Jupyter Server port (default: auto-selects free port)
 - `--root-dir DIR` — Kernel working directory (created if absent)

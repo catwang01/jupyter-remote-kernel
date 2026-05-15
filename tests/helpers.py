@@ -8,7 +8,7 @@ import uuid
 import aiohttp
 
 
-BASE_URL = "http://localhost:18890"
+BASE_URL = "http://127.0.0.1:18890"
 TOKEN = "test"
 AUTH = {"Authorization": f"token {TOKEN}"}
 JRK = f"{BASE_URL}/jrk"
@@ -83,7 +83,7 @@ async def ws_execute(kernel_id: str, code: str, timeout: int = 30) -> dict:
         {"output": str, "status": "ok"|"error", "execution_count": int,
          "ename": str|None, "evalue": str|None}
     """
-    ws_url = f"ws://localhost:18890/jrk/api/kernels/{kernel_id}/channels"
+    ws_url = f"ws://127.0.0.1:18890/jrk/api/kernels/{kernel_id}/channels"
     msg_id = str(uuid.uuid4())
     session_id = str(uuid.uuid4())
 

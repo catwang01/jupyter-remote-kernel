@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import platform
 
 
 def main() -> None:
@@ -23,8 +24,8 @@ def main() -> None:
     )
     ap.add_argument("--hub", required=True, metavar="URL",
                     help="Hub URL, e.g. http://hub-ip:8765")
-    ap.add_argument("--name", required=True, metavar="NAME",
-                    help="Display name for this machine (used as kernel prefix)")
+    ap.add_argument("--name", default=None, metavar="NAME",
+                    help="Display name for this machine (used as kernel prefix, default: platform.node())")
     ap.add_argument("--jupyter-port", type=int, default=0, metavar="PORT",
                     help="Local Jupyter Server port (default: auto)")
     ap.add_argument("--root-dir", default="", metavar="DIR",
@@ -56,8 +57,13 @@ def main() -> None:
         # Filter out the '--' separator if present
         jupyter_args = [arg for arg in args.jupyter_args if arg != '--']
 
+        if args.name:
+            name = args.name
+        else:
+            name = f"{platform.node()}-{platform.system().lower()}-{platform.machine().lower()}"
+
         asyncio.run(RemoteAgent(
-            args.hub, args.name, args.jupyter_port, args.root_dir,
+            args.hub, name, args.jupyter_port, args.root_dir,
             hub_token=args.token,
             debug=args.debug,
             extra_headers=extra_headers,

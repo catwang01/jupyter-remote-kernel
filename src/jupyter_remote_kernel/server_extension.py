@@ -25,6 +25,7 @@ import base64
 import json
 import time
 import uuid
+from queue import Empty
 from typing import Dict, Optional
 
 import tornado.web
@@ -128,7 +129,7 @@ def _patch_gateway_kernel_client():
             remaining = max(0.0, deadline - time.monotonic()) if deadline else None
             try:
                 msg = await self.iopub_channel.get_msg(timeout=remaining)
-            except Exception:
+            except Empty:
                 raise TimeoutError("Timeout waiting for kernel output")
 
             if msg["parent_header"].get("msg_id") != msg_id:
