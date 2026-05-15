@@ -77,6 +77,7 @@ class RemoteAgent:
             f"--ServerApp.token={self.token}",
             "--ServerApp.ip=127.0.0.1",
             "--ServerApp.allow_remote_access=False",
+            "--allow-root",  # needed when running as root (e.g., cloud servers)
             # Auto-cull idle kernels to clean up dead/stale kernel processes
             "--MappingKernelManager.cull_idle_timeout=3600",  # 1 hour
             "--MappingKernelManager.cull_interval=300",       # check every 5 min
