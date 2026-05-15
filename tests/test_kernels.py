@@ -43,6 +43,30 @@ async def test_list_kernels(kernel):
     assert kernel in ids
 
 
+async def test_list_kernels_aggregates_all_agents():
+    """GET /jrk/api/kernels returns kernels from all agents combined."""
+    kid1 = kid2 = None
+    async with aiohttp.ClientSession(headers=AUTH) as s:
+        async with s.post(f"{JRK}/api/kernels", json={"name": "agent1:python3"}) as r:
+            kid1 = (await r.json())["id"]
+        async with s.post(f"{JRK}/api/kernels", json={"name": "agent2:python3"}) as r:
+            kid2 = (await r.json())["id"]
+    try:
+        async with aiohttp.ClientSession(headers=AUTH) as s:
+            async with s.get(f"{JRK}/api/kernels") as r:
+                assert r.status == 200
+                all_kernels = await r.json()
+        ids = [k["id"] for k in all_kernels]
+        assert kid1 in ids, f"agent1 kernel {kid1} missing from aggregated list"
+        assert kid2 in ids, f"agent2 kernel {kid2} missing from aggregated list"
+    finally:
+        async with aiohttp.ClientSession(headers=AUTH) as s:
+            if kid1:
+                await s.delete(f"{JRK}/api/kernels/{kid1}")
+            if kid2:
+                await s.delete(f"{JRK}/api/kernels/{kid2}")
+
+
 async def test_delete_kernel(agent1):
     # Create a fresh kernel specifically to delete
     async with aiohttp.ClientSession(headers=AUTH) as s:
