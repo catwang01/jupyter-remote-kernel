@@ -90,8 +90,9 @@ All endpoints called by GatewayClient and their implementation status:
 
 ## Important Implementation Notes
 
-- `api_kernelspecs` must return `"default": ""` (empty string, not null) — JupyterLab's GatewayMappingKernelManager expects unicode.
-- **Kernelspec `name` field bug**: Hub must set `v["name"] = key` (e.g., `machine-1:python3`) in the kernelspec response. Without this, JupyterLab sends just `"python3"` when creating kernels, and Hub routes all to the first tunnel.
+- `api_kernelspecs` `"default"` field must be a string (not null) — JupyterLab's GatewayMappingKernelManager expects unicode. Hub uses `next(iter(specs), "")` so it returns the first kernelspec name if agents are connected, or empty string if none.
+- **Kernelspec `name` field bug (FIXED 2026-05-14)**: Hub must set `v["name"] = key` (e.g., `machine-1:python3`) in the kernelspec response. Without this, JupyterLab sends just `"python3"` when creating kernels, and Hub routes all to the first tunnel. Fixed in both `KernelSpecsHandler.get()` (list) and `KernelSpecHandler.get()` (single).
+- **`POST /api/kernels` returns 201**: Hub proxies the status code from the remote Jupyter Server, which returns 201 Created (not 200). Clients should accept both `200` and `201`.
 - **Tornado `finish()` rejects lists**: `KernelsHandler.get` aggregates results from all agents into a list. Tornado's `finish()` refuses to serialize lists directly (CSRF protection). Must use `self.finish(json.dumps(results))` with explicit `Content-Type: application/json` header.
 - Agent generates a random token for its local Jupyter Server. On restart, it kills any existing process on the port to avoid token mismatch.
 - Agent passes `cwd=root_dir` to subprocess — `--ServerApp.root_dir` only affects the file browser, not the kernel's cwd.
