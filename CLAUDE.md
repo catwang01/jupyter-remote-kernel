@@ -17,10 +17,21 @@ src/jupyter_remote_kernel/
 ├── server_extension.py  # Extension Hub (Tornado, embedded in JupyterLab)
 ├── agent.py             # Remote agent (runs on each remote machine)
 └── cli.py               # CLI: `hub` and `agent` subcommands
+tests/
+├── conftest.py          # Subprocess fixtures: JupyterLab + agents
+├── helpers.py           # Shared: AUTH, JRK, poll_kernel_idle, ws_execute
+├── test_kernelspecs.py  # Kernelspec list/single/name/default
+├── test_kernels.py      # Kernel CRUD + aggregation
+├── test_execution.py    # WS code execution (print, expression, error)
+├── test_routing.py      # Agent routing isolation + prefix routing
+├── test_reconnect.py    # Agent disconnect/reconnect behaviour
+├── test_errors.py       # Error paths (duplicate name, 404s)
+└── test_kernel_lifecycle.py  # Kernel lifecycle (death, delete-when-agent-gone)
 jupyter-config/
 └── server_config.d/
     └── jupyter_remote_kernel.json  # Auto-enables extension on install
 pyproject.toml           # Package metadata + extension entry points
+pytest.ini               # asyncio_mode=auto, timeout=120
 ```
 
 ## Architecture
@@ -176,6 +187,36 @@ jupyter-remote-kernel agent --hub http://localhost:8888/jupyter/jrk --name local
 # edmac agent (Ed's Mac)
 jupyter-remote-kernel agent --hub http://catwang.top/jupyter/jrk --name edmac --token <token>
 ```
+
+## Testing
+
+Integration tests run in extension mode: a JupyterLab process with the JRK extension + two agent subprocesses, all managed by pytest session-scoped fixtures.
+
+```bash
+# Install test deps
+pip install -e ".[test]"
+
+# Run all tests (~5 minutes)
+pytest tests/
+
+# Run a single file
+pytest tests/test_kernels.py -v
+```
+
+**Test architecture**:
+- JupyterLab on `localhost:18890` with `token=test`, `GatewayClient.url=http://localhost:18890/jrk`
+- Two agents (`agent1`, `agent2`) as session-scoped fixtures; `kernel` fixture is function-scoped (creates + deletes per test)
+- `ws_execute()` helper opens WS to `/jrk/api/kernels/{id}/channels`, sends Jupyter wire protocol `execute_request`, collects `stream`/`execute_result`/`execute_reply`
+- `pytest-asyncio` with `asyncio_mode=auto`; `pytest-timeout` at 120s per test
+
+**25 tests across 7 files**:
+- `test_kernelspecs.py` (4) — list, single, name field, default type
+- `test_kernels.py` (7) — create, get, list, aggregation across agents, delete, restart, interrupt
+- `test_execution.py` (3) — print, expression, error
+- `test_routing.py` (2) — agent routing isolation, prefix routing
+- `test_reconnect.py` (2) — agent disconnect cleanup, reconnect + new kernel
+- `test_errors.py` (3) — duplicate agent name, nonexistent kernel GET/DELETE
+- `test_kernel_lifecycle.py` (4) — hub delete from registry, kernel death, delete when agent gone, WS to deleted kernel (close code 4404)
 
 ## Dependencies
 
