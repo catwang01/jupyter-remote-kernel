@@ -193,6 +193,20 @@ jupyter-remote-kernel agent --hub http://localhost:8888/jupyter/jrk --name local
 jupyter-remote-kernel agent --hub http://catwang.top/jupyter/jrk --name edmac --token <token>
 ```
 
+### Deploying to myjupyterlab (production)
+
+Source code is volume-mounted into the `myjupyterlab` container via `~/jupyterlab/docker-compose.yaml`:
+```
+${PWD}/workspace/jupyter-remote-kernel/src/jupyter_remote_kernel → /opt/conda/lib/python3.10/site-packages/jupyter_remote_kernel
+```
+
+After code changes, restart the container to apply:
+```bash
+cd ~ && bash run.sh up
+```
+
+No wheel build or `pip install` needed — the mount makes the host source visible inside the container immediately.
+
 ## Testing
 
 Integration tests run in extension mode: a JupyterLab process with the JRK extension + two agent subprocesses, all managed by pytest session-scoped fixtures.
@@ -214,7 +228,7 @@ pytest tests/test_kernels.py -v
 - `ws_execute()` helper supports two modes: direct JRK WS (`/jrk/api/kernels/{id}/channels`) or via JupyterLab proxy (`/api/kernels/{id}/channels`, triggered by `via_jlab=True`)
 - `pytest-asyncio` with `asyncio_mode=auto`; `pytest-timeout` at 120s per test
 
-**27 tests across 7 files**:
+**26 tests across 7 files**:
 - `test_kernelspecs.py` (4) — list, single, name field, default type
 - `test_kernels.py` (7) — create, get, list, aggregation across agents, delete, restart, interrupt
 - `test_execution.py` (4) — print, expression, error, long-running via JupyterLab proxy (5s sleep regression)
