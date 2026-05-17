@@ -237,7 +237,7 @@ class RemoteAgent:
             self._dbg("SEND", opened)
             await hub_ws.send_json(opened)
             # Fire-and-forget relay task; closes itself when the WS ends
-            asyncio.create_task(self._relay_ws_to_hub(hub_ws, local_ws, ws_id))
+            asyncio.ensure_future(self._relay_ws_to_hub(hub_ws, local_ws, ws_id))
         except Exception as e:
             reject = {
                 "type": "ws_reject", "ws_id": ws_id, "error": str(e),
@@ -271,7 +271,7 @@ class RemoteAgent:
                                     if t == "registered":
                                         print(f"[Agent] Registered as '{self.name}' — ready")
                                         # Start heartbeat task
-                                        heartbeat_task = asyncio.create_task(self._heartbeat(session))
+                                        heartbeat_task = asyncio.ensure_future(self._heartbeat(session))
 
                                     elif t == "error":
                                         error_msg = data.get("message", "unknown error")
@@ -279,12 +279,12 @@ class RemoteAgent:
                                         raise RuntimeError(f"Hub rejected registration: {error_msg}")
 
                                     elif t == "http_req":
-                                        asyncio.create_task(
+                                        asyncio.ensure_future(
                                             self._relay_http(session, ws, data)
                                         )
 
                                     elif t == "ws_open":
-                                        asyncio.create_task(
+                                        asyncio.ensure_future(
                                             self._open_ws(session, ws, data)
                                         )
 
