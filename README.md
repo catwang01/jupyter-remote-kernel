@@ -26,7 +26,7 @@ Run Jupyter kernels on remote machines through a reverse WebSocket tunnel. No in
 pip install -e .
 ```
 
-Requirements: Python >= 3.9, `aiohttp >= 3.9`, `jupyter_server >= 2.0`. Remote machines also need `ipykernel` installed.
+Requirements: Python >= 3.6, `aiohttp >= 3.6`. Remote machines also need `jupyter_server` and `ipykernel` installed.
 
 ## Deployment Modes
 

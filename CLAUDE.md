@@ -30,7 +30,8 @@ tests/
 jupyter-config/
 └── server_config.d/
     └── jupyter_remote_kernel.json  # Auto-enables extension on install
-pyproject.toml           # Package metadata + extension entry points
+pyproject.toml           # Build system only (setuptools>=40)
+setup.cfg                # Package metadata (name, version, deps, entry points)
 pytest.ini               # asyncio_mode=auto, timeout=120
 ```
 
@@ -239,9 +240,11 @@ pytest tests/test_kernels.py -v
 
 ## Dependencies
 
-- `aiohttp>=3.9` — async HTTP server/client (standalone Hub + agent's WS client)
-- `jupyter_server>=2.0` — remote Jupyter Server (started by agent) + extension framework (Tornado handlers)
-- `ipykernel` — must be installed on remote machines
+- `aiohttp>=3.6` — async HTTP server/client (standalone Hub + agent's WS client). Only required pip dependency.
+- `jupyter_server>=1.0` — optional (`pip install .[hub]`), needed for extension mode Hub. Agent starts it as a subprocess (not imported).
+- `ipykernel` — must be installed on remote machines (agent's Jupyter Server subprocess needs it)
+
+**Python 3.6 compatibility**: Agent and CLI use only `asyncio.ensure_future()` and `get_event_loop().run_until_complete()` (no `asyncio.create_task` or `asyncio.run`). Metadata lives in `setup.cfg` (not `pyproject.toml` `[project]` table) so older setuptools (≤59) can build it.
 
 ### Optional (for Jupyter MCP integration)
 
