@@ -8,7 +8,7 @@ def main() -> None:
         prog="jupyter-remote-kernel",
         description="Run remote Jupyter kernels through a reverse WebSocket tunnel.",
     )
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")
 
     # -- hub ------------------------------------------------------------------
     hp = sub.add_parser("hub", help="Start the Hub (run on a publicly reachable host)")
@@ -41,6 +41,10 @@ def main() -> None:
 
     args = p.parse_args()
 
+    if args.cmd is None:
+        p.print_help()
+        raise SystemExit(1)
+
     if args.cmd == "hub":
         from .hub import Hub
         Hub(token=args.token or None).run(host=args.host, port=args.port)
@@ -62,7 +66,7 @@ def main() -> None:
         else:
             name = f"{platform.node()}-{platform.system().lower()}-{platform.machine().lower()}"
 
-        asyncio.run(RemoteAgent(
+        asyncio.get_event_loop().run_until_complete(RemoteAgent(
             args.hub, name, args.jupyter_port, args.root_dir,
             hub_token=args.token,
             debug=args.debug,
