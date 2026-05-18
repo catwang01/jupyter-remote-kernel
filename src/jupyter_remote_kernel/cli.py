@@ -36,6 +36,8 @@ def main() -> None:
                     help="Print all WebSocket messages to stdout")
     ap.add_argument("--extra-header", action="append", default=[], metavar="KEY:VALUE",
                     help="Extra HTTP header added to all Hub requests (repeatable)")
+    ap.add_argument("--jupyter-executable", default=None, metavar="PATH",
+                    help="Path to jupyter-server executable (default: sys.executable -m jupyter_server)")
     ap.add_argument("jupyter_args", nargs=argparse.REMAINDER, metavar="-- [JUPYTER_ARGS...]",
                     help="Additional arguments passed to jupyter server (after --)")
 
@@ -72,6 +74,7 @@ def main() -> None:
             debug=args.debug,
             extra_headers=extra_headers,
             jupyter_args=jupyter_args,
+            jupyter_executable=args.jupyter_executable,
         ).run())
 
 

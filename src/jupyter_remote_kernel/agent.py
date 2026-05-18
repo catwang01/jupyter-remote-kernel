@@ -28,7 +28,7 @@ def _free_port() -> int:
 
 
 class RemoteAgent:
-    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None, jupyter_args: Optional[list] = None):
+    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None, jupyter_args: Optional[list] = None, jupyter_executable: Optional[str] = None):
         base = hub_url.rstrip("/")
         ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
         self.tunnel_url = f"{ws_base}/tunnel/register"
@@ -43,6 +43,7 @@ class RemoteAgent:
         self.token = secrets.token_hex(16)
         self._local_ws: Dict[str, aiohttp.ClientWebSocketResponse] = {}
         self.jupyter_args = jupyter_args or []
+        self.jupyter_executable = jupyter_executable
 
     def _dbg(self, direction: str, msg: dict) -> None:
         """Print a complete debug line for a tunnel message if --debug is set."""
@@ -70,8 +71,11 @@ class RemoteAgent:
         )
         await asyncio.sleep(1)
 
-        cmd = [
-            sys.executable, "-m", "jupyter_server",
+        if self.jupyter_executable:
+            cmd = [self.jupyter_executable]
+        else:
+            cmd = [sys.executable, "-m", "jupyter_server"]
+        cmd += [
             "--no-browser",
             f"--port={self.jupyter_port}",
             f"--ServerApp.token={self.token}",
