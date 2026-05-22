@@ -38,6 +38,10 @@ def main() -> None:
                     help="Extra HTTP header added to all Hub requests (repeatable)")
     ap.add_argument("--jupyter-executable", default=None, metavar="PATH",
                     help="Path to jupyter-server executable (default: sys.executable -m jupyter_server)")
+    ap.add_argument("--jupyter-server-url", default=None, metavar="URL",
+                    help="Use an existing Jupyter Server at this URL instead of starting one (e.g. http://localhost:8888)")
+    ap.add_argument("--jupyter-server-token", default="", metavar="TOKEN",
+                    help="Auth token for the external Jupyter Server (used with --jupyter-server-url)")
     ap.add_argument("jupyter_args", nargs=argparse.REMAINDER, metavar="-- [JUPYTER_ARGS...]",
                     help="Additional arguments passed to jupyter server (after --)")
 
@@ -63,18 +67,30 @@ def main() -> None:
         # Filter out the '--' separator if present
         jupyter_args = [arg for arg in args.jupyter_args if arg != '--']
 
+        if args.jupyter_server_url:
+            if args.jupyter_port:
+                p.error("--jupyter-port cannot be used with --jupyter-server-url")
+            if args.root_dir:
+                p.error("--root-dir cannot be used with --jupyter-server-url")
+            if args.jupyter_executable:
+                p.error("--jupyter-executable cannot be used with --jupyter-server-url")
+            if jupyter_args:
+                p.error("extra Jupyter args (after --) cannot be used with --jupyter-server-url")
+
         if args.name:
             name = args.name
         else:
             name = f"{platform.node()}-{platform.system().lower()}-{platform.machine().lower()}"
 
-        asyncio.get_event_loop().run_until_complete(RemoteAgent(
+        asyncio.run(RemoteAgent(
             args.hub, name, args.jupyter_port, args.root_dir,
             hub_token=args.token,
             debug=args.debug,
             extra_headers=extra_headers,
             jupyter_args=jupyter_args,
             jupyter_executable=args.jupyter_executable,
+            jupyter_server_url=args.jupyter_server_url,
+            jupyter_server_token=args.jupyter_server_token,
         ).run())
 
 

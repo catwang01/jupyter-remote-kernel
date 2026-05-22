@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 from typing import Dict, Optional
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import aiohttp
 from aiohttp import WSMsgType
@@ -28,7 +29,7 @@ def _free_port() -> int:
 
 
 class RemoteAgent:
-    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None, jupyter_args: Optional[list] = None, jupyter_executable: Optional[str] = None):
+    def __init__(self, hub_url: str, name: str, jupyter_port: int = 0, root_dir: str = "", hub_token: str = "", debug: bool = False, extra_headers: Optional[Dict[str, str]] = None, jupyter_args: Optional[list] = None, jupyter_executable: Optional[str] = None, jupyter_server_url: Optional[str] = None, jupyter_server_token: str = ""):
         base = hub_url.rstrip("/")
         ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
         self.tunnel_url = f"{ws_base}/tunnel/register"
@@ -36,14 +37,32 @@ class RemoteAgent:
         self.hub_token = hub_token
         self.extra_headers: Dict[str, str] = extra_headers or {}
         self.debug = debug
-        self.jupyter_port = jupyter_port or _free_port()
-        self.root_dir = root_dir
-        self.jupyter_base_http = f"http://localhost:{self.jupyter_port}"
-        self.jupyter_base_ws = f"ws://localhost:{self.jupyter_port}"
-        self.token = secrets.token_hex(16)
         self._local_ws: Dict[str, aiohttp.ClientWebSocketResponse] = {}
         self.jupyter_args = jupyter_args or []
         self.jupyter_executable = jupyter_executable
+
+        if jupyter_server_url:
+            # Use an externally-managed Jupyter Server — don't start one ourselves
+            parsed = urlparse(jupyter_server_url)
+            qs = parse_qs(parsed.query)
+            # Extract token from query string if not explicitly provided
+            if not jupyter_server_token and "token" in qs:
+                jupyter_server_token = qs["token"][0]
+            # Strip token from URL (keep other query params if any)
+            remaining = {k: v for k, v in qs.items() if k != "token"}
+            clean_url = urlunparse(parsed._replace(query=urlencode(remaining, doseq=True)))
+            jbase = clean_url.rstrip("/")
+            self.jupyter_base_http = jbase
+            self.jupyter_base_ws = jbase.replace("https://", "wss://").replace("http://", "ws://")
+            self.token = jupyter_server_token
+            self._external_jupyter = True
+        else:
+            self.jupyter_port = jupyter_port or _free_port()
+            self.root_dir = root_dir
+            self.jupyter_base_http = f"http://localhost:{self.jupyter_port}"
+            self.jupyter_base_ws = f"ws://localhost:{self.jupyter_port}"
+            self.token = secrets.token_hex(16)
+            self._external_jupyter = False
 
     def _dbg(self, direction: str, msg: dict) -> None:
         """Print a complete debug line for a tunnel message if --debug is set."""
@@ -252,7 +271,11 @@ class RemoteAgent:
     # ── Main loop ────────────────────────────────────────────────────────────
 
     async def run(self) -> None:
-        proc = await self._start_jupyter()
+        if self._external_jupyter:
+            print(f"[Agent] Using external Jupyter Server: {self.jupyter_base_http}")
+            proc = None
+        else:
+            proc = await self._start_jupyter()
         print(f"[Agent] Connecting to Hub: {self.tunnel_url}")
 
         try:
@@ -326,4 +349,5 @@ class RemoteAgent:
                             except asyncio.CancelledError:
                                 pass
         finally:
-            proc.kill()
+            if proc is not None:
+                proc.kill()
